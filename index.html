@@ -117,6 +117,50 @@
             font-size: 0.9em;
         }
 
+        .profile-photo {
+            width: 150px;
+            height: 150px;
+            background-color: #e0e0e0;
+            border-radius: 50%;
+            margin: 20px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 0.85em;
+        }
+
+        .project-showcase {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .project-card {
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #e0e0e0;
+        }
+
+        .project-image {
+            width: 100%;
+            height: 150px;
+            background-color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 0.85em;
+        }
+
+        .project-caption {
+            padding: 15px;
+            font-size: 0.9em;
+            color: #555;
+        }
+
         ul {
             list-style-position: inside;
             margin-left: 0;
@@ -144,6 +188,7 @@
 </head>
 <body>
     <div class="header">
+        <div class="profile-photo">Profile Photo</div>
         <h1>Tom Harper</h1>
         <p class="location">Santa Cruz, CA • San Francisco Bay Area</p>
         <div class="links">
@@ -171,6 +216,30 @@
 
     <h2>Featured Work & Press</h2>
 
+    <div class="project-showcase">
+        <div class="project-card">
+            <div class="project-image">VAPR System Image</div>
+            <div class="project-caption">
+                <strong>Vision-Assisted Package Retrieval (VAPR)</strong><br>
+                AI-powered system using computer vision to help drivers locate packages
+            </div>
+        </div>
+        <div class="project-card">
+            <div class="project-image">Smart Glasses Image</div>
+            <div class="project-caption">
+                <strong>Amazon Smart Glasses</strong><br>
+                AR glasses providing hands-free navigation and delivery assistance
+            </div>
+        </div>
+        <div class="project-card">
+            <div class="project-image">Rivian Interface Image</div>
+            <div class="project-caption">
+                <strong>Rivian Delivery Vehicle Software</strong><br>
+                In-vehicle infotainment and delivery management system
+            </div>
+        </div>
+    </div>
+
     <div class="news-item">
         <span class="news-date">Amazon VAPR (2024):</span>
         <a href="https://techcrunch.com/2024/10/09/amazons-new-ai-powered-vision-tech-tells-drivers-which-packages-to-deliver/" target="_blank">TechCrunch: Amazon's new AI-powered vision tech tells drivers which packages to deliver</a>
@@ -188,6 +257,21 @@
     <div class="news-item">
         <span class="news-date">Rivian Infotainment (2024):</span>
         <a href="https://evworld.com/article.php?id=446&slug=rivians-infotainment-revolution-ai-at-the-wheel-no-smartphone-required" target="_blank">EVWorld: Rivian's Infotainment Revolution - AI at the Wheel, No Smartphone Required</a>
+    </div>
+
+    <div class="news-item">
+        <span class="news-date">Echo Auto (2019):</span>
+        <a href="https://techcrunch.com/2019/01/08/after-over-a-million-pre-orders-amazons-echo-auto-has-begun-to-ship/" target="_blank">TechCrunch: After over a million pre-orders, Amazon's Echo Auto has begun to ship</a>
+    </div>
+
+    <div class="news-item">
+        <span class="news-date">Echo Buds (2019):</span>
+        <a href="https://www.geekwire.com/2019/amazon-unveils-new-alexa-powered-echo-buds-undercuts-apples-airpods-129-99-price-tag/" target="_blank">GeekWire: Amazon unveils new Alexa-powered Echo Buds, undercuts Apple's AirPods with $129.99 price tag</a>
+    </div>
+
+    <div class="news-item">
+        <span class="news-date">Xiaomi Switchable Wakeword (2019):</span>
+        <a href="https://www.indiatoday.in/technology/news/story/xiaomi-sold-1-million-units-of-redmi-note-8-pro-redmi-note-8-within-one-month-of-launch-in-india-1622651-2019-11-26" target="_blank">India Today: Xiaomi Redmi Note 8 with Alexa switchable wakeword integration</a>
     </div>
 
     <div class="news-item">
@@ -227,9 +311,9 @@
         </div>
         <div class="highlight-description" style="margin-top: 10px;">
             <strong>Alexa Accessories & Communications (Mar 2019 - Sep 2020)</strong><br>
-            Enabled Alexa Accessories including Echo Auto, Echo Buds, and Frames. Focused on developer productivity and app performance,
-            driving cold start times from awful to industry standard. Introduced architectural modularization to deliver cross-platform
-            features 10x faster with equivalent quality.
+            Enabled Alexa Accessories including Echo Auto (with switchable wakeword functionality), Echo Buds, and Frames. Focused on
+            developer productivity and app performance, driving cold start times from awful to industry standard. Introduced architectural
+            modularization to deliver cross-platform features 10x faster with equivalent quality.
         </div>
         <div class="highlight-description" style="margin-top: 10px;">
             <strong>Alexa Mobile & Communications (Nov 2015 - Mar 2019)</strong><br>
