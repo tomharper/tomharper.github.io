@@ -120,14 +120,10 @@
         .profile-photo {
             width: 150px;
             height: 150px;
-            background-color: #e0e0e0;
             border-radius: 50%;
             margin: 20px 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #999;
-            font-size: 0.85em;
+            object-fit: cover;
+            display: block;
         }
 
         .project-showcase {
@@ -188,7 +184,7 @@
 </head>
 <body>
     <div class="header">
-        <div class="profile-photo">Profile Photo</div>
+        <img src="/assets/images/bio-photo.jpg" alt="Tom Harper" class="profile-photo">
         <h1>Tom Harper</h1>
         <p class="location">Santa Cruz, CA • San Francisco Bay Area</p>
         <p class="location">415-378-3779 • d.thomas.harper@gmail.com</p>
@@ -280,6 +276,11 @@
         <a href="https://www.droidcon.com/2022/08/01/story-about-how-amazon-built-their-first-in-vehicle-delivery-app-2/" target="_blank">Story about how Amazon built their first in-vehicle delivery app</a>
         •
         <a href="https://www.droidcon.com/2022/09/21/tom-harper-lingshuang-wu/" target="_blank">Tom Harper & Lingshuang Wu presentation</a>
+    </div>
+
+    <div class="news-item">
+        <span class="news-date">Mobcrush (2015):</span>
+        <a href="https://gamesbeat.com/mobcrush-launches-mobile-game-streaming-on-android/" target="_blank">GamesBeat: Mobcrush launches mobile game streaming on Android</a>
     </div>
 
     <div class="news-item">
