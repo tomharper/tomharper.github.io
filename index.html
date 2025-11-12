@@ -117,13 +117,19 @@
             font-size: 0.9em;
         }
 
+        .profile-photos {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
         .profile-photo {
             width: 150px;
             height: 150px;
             border-radius: 50%;
-            margin: 20px 0;
             object-fit: cover;
-            display: block;
         }
 
         .project-showcase {
@@ -184,12 +190,11 @@
 </head>
 <body>
     <div class="header">
-        <div class="project-showcase">
-            <div class="project-card">
+        <div class="profile-photos">
+            <img src="/assets/images/bio-photo.jpg" alt="Tom Harper" class="profile-photo">
             <img src="india_head.png" alt="Tom Harper" class="profile-photo">
             <img src="tom_halloween_2017.jpg" alt="Tom Harper" class="profile-photo">
             <img src="tom_stephan_talk.jpg" alt="Tom Harper" class="profile-photo">
-            </div>
         </div>
         <h1>Tom Harper</h1>
         <p class="location">Santa Cruz, CA • San Francisco Bay Area</p>
