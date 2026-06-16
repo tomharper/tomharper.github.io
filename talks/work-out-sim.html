@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Work-Out Sim — Monte Carlo idea generator</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #111831;
+    --ink: #e6ecff;
+    --muted: #8a97c2;
+    --accent: #7dd3fc;
+    --accent2: #f0abfc;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 28px 40px 8px; }
+  h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  main { padding: 16px 24px 40px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid #1e2950;
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  .mermaid { background: transparent; }
+  .legend {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    margin: 20px 0 0;
+  }
+  .q {
+    background: #0f1733; border: 1px solid #22305e; border-radius: 10px;
+    padding: 12px 14px; font-size: 13px;
+  }
+  .q b { color: var(--accent); display: block; margin-bottom: 4px; }
+  .q.gold b { color: #fde68a; }
+  .q.noise b { color: #94a3b8; }
+  .q.contested b { color: var(--accent2); }
+  footer { color: var(--muted); font-size: 12px; padding: 10px 40px 30px; }
+  @media (max-width: 900px) { .legend { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Work-Out Sim — Monte Carlo idea generator</h1>
+  <div class="sub">You bring the problem. A population of grounded noses argues it out, thousands of times, with the dice shaken. The product is a distribution, not a meeting.</div>
+</header>
+
+<main>
+  <div class="card">
+    <pre class="mermaid">
+flowchart TB
+    Problem[["🎯 Problem<br/>'deploys take 3 days'"]]
+
+    subgraph Pop["🧬 Population (evolves across sessions)"]
+      direction LR
+      N1["SRE-nose"]
+      N2["New-hire-nose"]
+      N3["Finance-nose"]
+      N4["Legacy-nose"]
+      N5["Skeptic-nose"]
+      N6["…variants"]
+    end
+
+    Code[("📚 GitNexus<br/>code + graph + history")]
+
+    subgraph Harness["🎲 Monte Carlo harness — N runs"]
+      direction TB
+      Dice["Shake the dice per run:<br/>• which noses are in the room<br/>• which evidence each pulls<br/>• proposal order<br/>• vote order<br/>• persona temperature<br/>• problem rephrasing"]
+      Run["Run the room:<br/>propose → vote → record"]
+      Dice --> Run
+      Run -->|"×10,000"| Run
+    end
+
+    subgraph Dist["📊 Distribution over ideas"]
+      direction TB
+      Scatter["Frequency × Agreement scatter<br/>(four quadrants below)"]
+      Sens["Sensitivity:<br/><i>which ideas survive if<br/>we remove SRE-nose? etc.</i>"]
+      Var["Variance flags:<br/><i>ideas the room couldn't<br/>agree with itself about</i>"]
+    end
+
+    Human["🧑 Human<br/>explores the distribution"]
+
+    HumanActs{{"Human actions:<br/>• keep / ignore<br/>• start a branch<br/>• add own idea<br/>• rephrase problem<br/>• spawn / retire a nose"}}
+
+    subgraph Sakana["🧬 Sakana loop — mutates the population"]
+      direction TB
+      F1["Proposer fitness<br/>does this nose surface<br/>ideas the human keeps?"]
+      F2["Catalyst fitness<br/>does this nose's presence<br/>shift the distribution<br/>toward kept ideas?"]
+      F3["Judge fitness<br/>do this nose's votes<br/>correlate with human's picks?"]
+      F4["Gap signal<br/>human-added ideas<br/>no nose found → spawn new lens"]
+      Mut["Mutate / prune / spawn:<br/>prompts, search strategies,<br/>priors, temperature"]
+      F1 --> Mut
+      F2 --> Mut
+      F3 --> Mut
+      F4 --> Mut
+    end
+
+    Problem --> Harness
+    Pop --> Harness
+    Code -.grounds every run.-> Harness
+    Harness --> Scatter
+    Harness --> Sens
+    Harness --> Var
+    Scatter --> Human
+    Sens --> Human
+    Var --> Human
+    Human --> HumanActs
+    HumanActs --> F1
+    HumanActs --> F2
+    HumanActs --> F3
+    HumanActs --> F4
+    Mut -.next session.-> Pop
+
+    classDef problem fill:#3b2a0a,stroke:#d97706,color:#fde68a;
+    classDef human fill:#0b2a3f,stroke:#38bdf8,color:#e0f2fe;
+    classDef harness fill:#2a0f24,stroke:#ec4899,color:#fce7f3;
+    classDef dist fill:#2a2208,stroke:#ca8a04,color:#fef3c7;
+    classDef pop fill:#0a2416,stroke:#16a34a,color:#dcfce7;
+    classDef sakana fill:#0a2416,stroke:#16a34a,color:#dcfce7;
+
+    class Problem problem;
+    class Human,HumanActs human;
+    class Harness,Dice,Run harness;
+    class Dist,Scatter,Sens,Var dist;
+    class Pop,N1,N2,N3,N4,N5,N6 pop;
+    class Sakana,F1,F2,F3,F4,Mut sakana;
+    </pre>
+
+    <div class="legend">
+      <div class="q gold"><b>Rare gold</b>low freq × high agreement — ideas only a specific lens finds, but everyone nods when they do. The quadrant a single Work-Out session can't see.</div>
+      <div class="q"><b>Obvious wins</b>high freq × high agreement — you probably already knew. Good sanity check that the room isn't broken.</div>
+      <div class="q noise"><b>Noise</b>low freq × low agreement — prune. Signal that some noses are chasing hobbyhorses.</div>
+      <div class="q contested"><b>Contested evergreens</b>high freq × low agreement — the stuff every retro re-litigates. Worth naming, rarely worth solving in this session.</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Rendered client-side with Mermaid. Open in any modern browser — no build step.
+</footer>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "dark",
+    themeVariables: {
+      background: "#111831",
+      primaryColor: "#1b2750",
+      primaryTextColor: "#e6ecff",
+      primaryBorderColor: "#3b4a86",
+      lineColor: "#7dd3fc",
+      fontFamily: "ui-sans-serif, system-ui, sans-serif"
+    },
+    flowchart: { htmlLabels: true, curve: "basis", padding: 12 }
+  });
+</script>
+</body>
+</html>

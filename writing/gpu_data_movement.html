@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU Data Movement & System Design</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eee; --muted: #a0a0b8; --green: #4ecca3; --yellow: #f0c040; --red: #e94560; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: var(--bg); color: var(--text); padding: 2rem; line-height: 1.6; }
+  h1 { color: var(--accent); margin-bottom: 2rem; font-size: 1.5rem; }
+  h2 { color: var(--green); margin: 2rem 0 1rem; font-size: 1.1rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }
+
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th { background: var(--accent); color: white; text-align: left; padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+  td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2a2a4a; font-size: 0.85rem; vertical-align: top; }
+  tr:hover td { background: rgba(78, 204, 163, 0.05); }
+  .format-name { color: var(--green); font-weight: bold; white-space: nowrap; }
+  .weakness { color: var(--yellow); }
+  .when { color: var(--muted); font-style: italic; }
+
+  .answer-box { background: var(--card); border-left: 3px solid var(--accent); padding: 1.2rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+  .answer-box .question { color: var(--accent); font-weight: bold; margin-bottom: 0.8rem; font-size: 0.95rem; }
+  .step { display: flex; gap: 0.8rem; margin: 0.5rem 0; }
+  .step-num { color: var(--accent); font-weight: bold; min-width: 1.5rem; }
+  .step-text b { color: var(--green); }
+  .step-text em { color: var(--muted); font-style: normal; font-size: 0.8rem; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); padding: 1rem; border-radius: 6px; border: 1px solid #2a2a4a; }
+  .card:hover { border-color: var(--green); }
+  .card-title { color: var(--green); font-weight: bold; margin-bottom: 0.4rem; }
+  .card-desc { color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<h1>GPU Data Movement & System Design</h1>
+
+<h2>Serialization Formats</h2>
+<table>
+  <tr><th>Format</th><th>Strengths</th><th>Weaknesses</th><th>When to use</th></tr>
+  <tr>
+    <td class="format-name">Pickle</td>
+    <td>Convenient, Python-native</td>
+    <td class="weakness">Unsafe across versions, slow, arbitrary code execution</td>
+    <td class="when">Never for cross-process or untrusted data</td>
+  </tr>
+  <tr>
+    <td class="format-name">JSON / JSONL</td>
+    <td>Human-readable, universal</td>
+    <td class="weakness">Slow, no binary support</td>
+    <td class="when">JSONL for line-oriented streaming/logging</td>
+  </tr>
+  <tr>
+    <td class="format-name">Protobuf</td>
+    <td>Schema'd, fast, language-agnostic, broad ecosystem</td>
+    <td class="weakness">Requires serialize/deserialize step; schema management overhead</td>
+    <td class="when">Cross-service communication, config, any place you need a stable contract</td>
+  </tr>
+  <tr>
+    <td class="format-name">FlatBuffers</td>
+    <td>Zero-copy read directly from buffer — no parsing step</td>
+    <td class="weakness">Harder to use, smaller ecosystem than Protobuf</td>
+    <td class="when">Shoving bytes at accelerators; anywhere decode cost matters</td>
+  </tr>
+  <tr>
+    <td class="format-name">Arrow / Parquet</td>
+    <td>Columnar, zero-copy, column pruning & predicate pushdown</td>
+    <td class="weakness">Overkill for small payloads. Wrong shape for dense tensors — columnar layout doesn't help N-dim arrays</td>
+    <td class="when">Arrow = in-memory, Parquet = on-disk. The answer for tabular/analytics data, NOT model weights</td>
+  </tr>
+  <tr>
+    <td class="format-name">Safetensors</td>
+    <td>8-byte length prefix + JSON header (names, dtypes, shapes, offsets) + raw contiguous bytes. Mmap-friendly, zero-copy, no parsing of payload</td>
+    <td class="weakness">Narrow scope (tensors only)</td>
+    <td class="when">Model weights. HF created it to kill pickle's arbitrary code execution risk on a public model hub</td>
+  </tr>
+  <tr>
+    <td class="format-name">MessagePack / CBOR</td>
+    <td>Binary JSON, compact</td>
+    <td class="weakness">Less tooling than JSON/Protobuf</td>
+    <td class="when">Middle ground when JSON is too slow but schema is overkill</td>
+  </tr>
+</table>
+
+<h2>Safetensors — Why It Exists</h2>
+<div class="answer-box">
+  <div class="question">Format layout:</div>
+  <div class="step"><span class="step-num">1.</span><span class="step-text"><b>8 bytes</b> — header length (little-endian u64)</span></div>
+  <div class="step"><span class="step-num">2.</span><span class="step-text"><b>JSON header</b> — tensor names, dtypes, shapes, byte offsets (plain UTF-8, not JSONB)</span></div>
+  <div class="step"><span class="step-num">3.</span><span class="step-text"><b>Raw tensor data</b> — contiguous bytes right after the header</span></div>
+</div>
+<div class="answer-box" style="margin-top: 0.5rem;">
+  <div class="question">Why HF built it:</div>
+  <div class="step"><span class="step-num">1.</span><span class="step-text"><b>Security</b> — pickle allows arbitrary code execution on load. Unacceptable for a public model hub.</span></div>
+  <div class="step"><span class="step-num">2.</span><span class="step-text"><b>Mmap</b> — memory-map the file, load only the tensors you need. Matters at 70B+ params.</span></div>
+  <div class="step"><span class="step-num">3.</span><span class="step-text"><b>Simplicity</b> — nothing to exploit, nothing to decode. Header + raw bytes is all you need for dense numerical arrays.</span></div>
+</div>
+
+<h2>Parquet vs Safetensors — Know Which to Reach For</h2>
+<div class="answer-box">
+  <div class="question">Why not just send Parquet for everything?</div>
+  <div class="step"><span class="step-num">&bull;</span><span class="step-text">Parquet is <b>columnar</b> — optimized for tabular data where you read a subset of columns. Tensors are dense N-dim arrays, not rows and columns.</span></div>
+  <div class="step"><span class="step-num">&bull;</span><span class="step-text">Sending a tensor as Parquet = flatten to columns, pay compression/decompression, reshape back. You lose the contiguous strided layout the GPU expects and gain nothing.</span></div>
+  <div class="step"><span class="step-num">&bull;</span><span class="step-text"><b>Parquet</b> = "100GB of training records." <b>Safetensors</b> = "100GB of model weights."</span></div>
+</div>
+
+<h2>"You have 100GB of records to move to 8 GPUs — what format and why?"</h2>
+<div class="answer-box">
+  <div class="question">The Answer:</div>
+  <div class="step"><span class="step-num">1.</span><span class="step-text"><b>Parquet</b> on disk, sharded so each shard fits in host memory per worker</span></div>
+  <div class="step"><span class="step-num">2.</span><span class="step-text">Read into <b>Arrow</b> on host <em>(zero-copy, columnar)</em></span></div>
+  <div class="step"><span class="step-num">3.</span><span class="step-text">Transfer to device using <b>pinned memory</b> <em>— makes host-to-device copies async (bonus points)</em></span></div>
+  <div class="step"><span class="step-num">4.</span><span class="step-text">Each GPU worker reads its own shard subset — <b>no cross-worker coordination</b> needed for reads</span></div>
+</div>
+
+<h2>Archetypes to Implement</h2>
+<div class="grid">
+  <div class="card">
+    <div class="card-title">1. Sharded In-Memory Store</div>
+    <div class="card-desc">Consistent hashing, rebalancing on node add/remove</div>
+  </div>
+  <div class="card">
+    <div class="card-title">2. Streaming Aggregator</div>
+    <div class="card-desc">Chunked processing, partial result emission</div>
+  </div>
+  <div class="card">
+    <div class="card-title">3. Work Queue</div>
+    <div class="card-desc">N workers, retry on failure</div>
+  </div>
+  <div class="card">
+    <div class="card-title">4. Dataset Loader</div>
+    <div class="card-desc">Read shards, decode, batch, yield — mini DataLoader with prefetching + worker pool</div>
+  </div>
+  <div class="card">
+    <div class="card-title">5. Log/Event Parser</div>
+    <div class="card-desc">Resilient to malformed lines, never crashes the stream</div>
+  </div>
+</div>
+
+<h2>System Design Prompts (Their Domain)</h2>
+<div class="grid">
+  <div class="card">
+    <div class="card-title">Training Data Pipeline</div>
+    <div class="card-desc">Object store &rarr; shuffling &rarr; sharding &rarr; workers &rarr; GPUs</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Distributed Inference Service</div>
+    <div class="card-desc">Request routing, batching, KV cache, model sharding</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Feature / Embedding Store</div>
+    <div class="card-desc">Write path from training, read path with low-latency lookup</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Checkpoint / Artifact System</div>
+    <div class="card-desc">Large blobs, versioning, fast restore</div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-Time Voice Agent — Latency Budget & Media Path (Twilio-shaped)</title>
+<style>
+  :root { --bg:#1a1a2e; --card:#16213e; --accent:#e94560; --text:#eee; --muted:#a0a0b8; --green:#4ecca3; --yellow:#f0c040; --red:#e94560; --blue:#5b9bd5; --purple:#a78bfa; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'SF Mono','Fira Code',monospace; background:var(--bg); color:var(--text); padding:2rem; line-height:1.6; max-width:1000px; margin:0 auto; }
+  h1 { color:var(--accent); margin-bottom:0.3rem; font-size:1.5rem; }
+  .sub { color:var(--muted); margin-bottom:2rem; font-size:0.9rem; }
+  h2 { color:var(--green); margin:2.4rem 0 1rem; font-size:1.15rem; border-bottom:1px solid #333; padding-bottom:0.5rem; }
+  h3 { color:var(--blue); margin:1.4rem 0 0.5rem; font-size:0.98rem; }
+  p { font-size:0.88rem; margin:0.6rem 0; }
+  b { color:var(--green); } em { color:var(--yellow); font-style:normal; }
+  code { background:#0d0d1a; padding:0.1rem 0.4rem; border-radius:3px; color:var(--blue); font-size:0.82rem; }
+  ul { margin:0.5rem 0 0.5rem 1.4rem; font-size:0.86rem; } li { margin:0.3rem 0; }
+
+  table { width:100%; border-collapse:collapse; margin:1rem 0; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.55rem 0.75rem; font-size:0.8rem; }
+  td { padding:0.55rem 0.75rem; border-bottom:1px solid #2a2a4a; font-size:0.82rem; vertical-align:top; }
+  tr:hover td { background:rgba(78,204,163,0.05); }
+  .num { color:var(--yellow); white-space:nowrap; font-weight:bold; }
+  .stage { color:var(--green); font-weight:bold; white-space:nowrap; }
+  .tot td { border-top:2px solid var(--accent); font-weight:bold; color:var(--text); }
+
+  pre.diagram { background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px; padding:1.2rem; overflow-x:auto; font-size:0.74rem; line-height:1.4; color:var(--text); margin:1rem 0; }
+  .a{color:var(--accent);} .g{color:var(--green);} .b{color:var(--blue);} .y{color:var(--yellow);} .m{color:var(--muted);} .p{color:var(--purple);}
+
+  .punch { background:#0d0d1a; border:1px dashed var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1rem 0; font-size:0.88rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:3px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
+  .box .t { color:var(--blue); font-weight:bold; margin-bottom:0.5rem; }
+  .tag { display:inline-block; background:#0d0d1a; border:1px solid var(--green); color:var(--green); padding:0.05rem 0.5rem; border-radius:10px; font-size:0.7rem; margin-right:0.4rem; }
+  .warn { color:var(--red); font-weight:bold; }
+</style>
+</head>
+<body>
+
+<h1>Real-Time Voice Agent — Latency Budget &amp; Media Path</h1>
+<div class="sub">Twilio-shaped: PSTN/SIP + WebRTC ingress, media streaming, sub-second mouth-to-mouth. Companion to <code>multimodal_fusion_design.md</code>.</div>
+
+<div class="punch">
+The number you defend in design review is <b>mouth-to-mouth latency</b>: from the
+instant the human stops speaking to the instant they hear the bot. Target
+<b>&lt;800ms</b> (banks/enterprise), great is <b>~500ms</b>. Everything below is
+about spending that budget — and the dominant cost is not a model, it's
+<em>deciding the human actually finished talking</em>.
+</div>
+
+<h2>1. The end-to-end media path (where the milliseconds live)</h2>
+
+<pre class="diagram">
+ <span class="m">caller</span>                 <span class="a">TWILIO EDGE</span>                   <span class="g">YOUR AGENT</span>                 <span class="b">MODELS</span>
+ ┌──────┐   PSTN/SIP   ┌─────────────┐   WS/media   ┌──────────────┐          ┌──────────┐
+ │ phone │ ──μ-law────▶│ media server│ ──stream────▶│  orchestrator│ ────────▶│ STT      │
+ │  or   │   8kHz      │  (regional  │   (20ms      │  VAD·endpoint│ ◀────────│ LLM      │
+ │browser│ ──Opus─────▶│   POP)      │    frames)   │  barge-in    │ ────────▶│ TTS      │
+ └──────┘   48kHz      └─────────────┘ ◀──audio─────└──────────────┘          └──────────┘
+    ▲                         │                            │                        │
+    └─────────────────────────┴────── playout ◀───────────┴── streamed audio ──────┘
+
+ <span class="y">PSTN path</span>: narrowband 8kHz G.711 μ-law — fixed by the carrier. Worse STT input.
+ <span class="y">WebRTC path</span>: wideband 48kHz Opus — better audio, but needs a browser/app.
+</pre>
+
+<div class="box">
+<div class="t">Twilio-specific reality (the part most candidates miss)</div>
+<ul>
+<li><b>PSTN audio is 8kHz μ-law (G.711)</b>, narrowband, ~64kbps. You do <em>not</em> control this — the carrier delivers it. It caps STT accuracy vs. the 48kHz Opus you'd get over WebRTC. Mention upsampling/denoise before STT.</li>
+<li><b>Media Streams</b> forks the call audio to your WebSocket in 20ms μ-law frames. <b>ConversationRelay</b> is the newer managed path — Twilio runs STT+TTS, you bring the LLM over WebSocket (removes two hops from your budget, at the cost of model choice).</li>
+<li><b>Regional POPs / media servers</b> — keep the media path close to the caller; a transatlantic RTT can eat 150ms by itself. Place the agent near the POP.</li>
+<li><b>Carrier/PSTN setup + jitter</b> is real and variable; WebRTC gives you a jitter buffer you can tune, PSTN does not.</li>
+</ul>
+</div>
+
+<h2>2. The mouth-to-mouth budget — staged</h2>
+
+<p>This is the table to draw. Each row is a stage; the trick is that <b>they pipeline</b>, so wall-clock &lt; sum (see §3).</p>
+
+<table>
+<tr><th>Stage</th><th>What happens</th><th>Naive</th><th>Tuned</th><th>Notes</th></tr>
+<tr><td class="stage">Network in (jitter buf)</td><td>frames arrive, de-jittered</td><td class="num">40ms</td><td class="num">20ms</td><td>WebRTC tunable; PSTN fixed</td></tr>
+<tr><td class="stage warn">Endpointing (turn end)</td><td><em>decide the human stopped</em></td><td class="num">700ms</td><td class="num">300ms</td><td class="warn">DOMINATES. silence wait + turn model</td></tr>
+<tr><td class="stage">STT (final)</td><td>partials stream live; finalize on endpoint</td><td class="num">300ms</td><td class="num">~50ms</td><td>partials already done; only the tail</td></tr>
+<tr><td class="stage">LLM TTFT</td><td>time to <em>first</em> token</td><td class="num">600ms</td><td class="num">250ms</td><td>prompt cache, small model, co-locate</td></tr>
+<tr><td class="stage">LLM→enough text</td><td>first sentence/clause to start TTS</td><td class="num">400ms</td><td class="num">~0ms</td><td>overlaps TTS — don't wait for full reply</td></tr>
+<tr><td class="stage">TTS TTFB</td><td>first audio chunk out</td><td class="num">300ms</td><td class="num">120ms</td><td>streaming TTS (Cartesia), first chunk only</td></tr>
+<tr><td class="stage">Network out + playout</td><td>encode, send, jitter buf, speaker</td><td class="num">60ms</td><td class="num">30ms</td><td>μ-law re-encode on PSTN</td></tr>
+<tr class="tot"><td>MOUTH-TO-MOUTH</td><td>perceived, with pipelining</td><td class="num">~1.4s</td><td class="num">~550ms</td><td>see waterfall §3</td></tr>
+</table>
+
+<div class="punch">
+<b>The dominant cost is endpointing, not inference.</b> Candidates obsess over LLM
+speed; the human-perceived lag is mostly <em>how long you wait in silence to be
+sure they finished</em>. Halving endpointing beats halving the LLM.
+</div>
+
+<h2>3. Why you STREAM and PIPELINE (the waterfall)</h2>
+
+<p>You never run the stages serially. STT emits partials <em>while the user talks</em>;
+the LLM can be <em>speculatively prefilled</em> on partials; TTS starts on the
+first clause while the LLM is still generating. The budget is a <b>waterfall, not
+a sum</b>.</p>
+
+<pre class="diagram">
+ user speaking ──────────────████████████│(stops)
+ STT partials  ──────────────░░░░░░░░░░░░│▓ final          <span class="m">(live; tail finalizes ~50ms)</span>
+ endpointing                            │└──wait──┘         <span class="a">◀ the gate: 300ms of "are they done?"</span>
+ LLM prefill (on partials) ──░░░░░░░░░░░░│                  <span class="m">(speculative; warm KV-cache before final)</span>
+ LLM decode                             │ ▓▓▓▓▓             <span class="m">(TTFT fast because prefill already paid)</span>
+ TTS (first clause)                     │   ▓▓▓▓▓▓▓         <span class="m">(starts on 1st sentence, not full reply)</span>
+ audio out                             │     ▓▓▓▓▓▓▓▓▶ <span class="g">user hears bot</span>
+                                        │◀────── ~550ms ──────▶
+</pre>
+
+<ul>
+<li><b>Streaming STT</b> → the transcript is basically ready at endpoint; you pay only the finalization tail, not the whole utterance.</li>
+<li><b>Speculative LLM prefill</b> → start prefilling on the partial transcript; if it's stable, TTFT is near-instant at endpoint. Cancel/redo if the tail changes the meaning (cost: wasted prefill — cheap relative to the latency win).</li>
+<li><b>Streaming TTS + sentence chunking</b> → emit audio for clause 1 while the LLM writes clause 2. First-audio is what the user feels.</li>
+<li><b>Prompt caching</b> → the system prompt + conversation history are a cache hit every turn; only the new turn is fresh prefill. (KV-cache reuse — ties to <code>14_inference_server</code>.)</li>
+</ul>
+
+<h2>4. Endpointing &amp; turn-taking (the hard, high-leverage part)</h2>
+
+<div class="box">
+<div class="t">The core question: did they STOP, or just PAUSE?</div>
+<p>VAD tells you "is there voice energy right now." It does <em>not</em> tell you
+"is the turn over." A 300ms gap mid-sentence ("send it to… uh… my checking
+account") must NOT trigger the bot. That's a separate <b>turn-detection /
+endpointing model</b> (semantic + acoustic), not raw VAD.</p>
+</div>
+
+<ul>
+<li><b>VAD</b> (Silero, WebRTC) — fast, cheap, per-frame energy/voice gate. The first filter.</li>
+<li><b>Endpointing</b> — combines silence duration <em>and</em> linguistic completeness. "I want to…" (incomplete → wait longer) vs "transfer fifty dollars." (complete → fire fast).</li>
+<li><b>The tradeoff knob:</b> short silence threshold = snappy but interrupts people who pause to think; long threshold = polite but laggy. This is the latency-vs-correctness knob again, and it's <em>per-deployment</em> (a bank IVR tolerates more wait than a casual assistant).</li>
+<li><b>Adaptive</b> — shorten the threshold after a clearly complete clause; lengthen it after a filler word or rising intonation.</li>
+</ul>
+
+<h3>Barge-in (interrupt the bot)</h3>
+<p>When the caller talks over the bot, two things must happen in <em>single-frame</em>
+latency:</p>
+<ol style="margin-left:1.4rem; font-size:0.86rem;">
+<li><b>Stop TTS instantly</b> — cancel playback + flush the outbound audio buffer (this is <code>10_audio_pipeline_interruptible.py</code> — one <code>asyncio.Event</code>, race every await against it).</li>
+<li><b>AEC3</b> must already be running so the bot's own voice in the mic isn't mistaken for barge-in. Without echo cancellation, the bot interrupts itself.</li>
+<li><b>Re-sequence</b> — the caller's interruption is a new high-priority event; discard the bot's half-spoken turn from context or mark it truncated so the LLM knows it wasn't fully heard.</li>
+</ol>
+
+<h2>5. Budget under failure &amp; tail latency</h2>
+<p>The average is a lie; users feel <b>p95/p99</b>. One slow stage blows the turn.</p>
+<table>
+<tr><th>Failure</th><th>Effect</th><th>Mitigation</th></tr>
+<tr><td class="stage">LLM TTFT spike</td><td>dead air mid-conversation</td><td>filler/backchannel ("let me check…") to mask; timeout→fallback model</td></tr>
+<tr><td class="stage">STT slow/wrong on μ-law</td><td>misheard intent</td><td>upsample+denoise; confidence gate → reprompt</td></tr>
+<tr><td class="stage">TTS stall</td><td>cut-off speech</td><td>buffer 1–2 chunks before playout starts; cache common phrases</td></tr>
+<tr><td class="stage">Network jitter</td><td>choppy audio</td><td>jitter buffer (adds latency — the tradeoff); regional POP</td></tr>
+</table>
+<div class="punch">
+<b>Dead air is the worst failure</b> — humans read &gt;~700ms of silence as "the
+line dropped." A cheap <em>backchannel</em> ("mm-hm", "let me pull that up")
+buys you LLM time and feels natural. Latency you can't remove, you can <em>mask</em>.
+</div>
+
+<h2>6. Scaling &amp; economics (the resource-scheduler view)</h2>
+<ul>
+<li><b>A voice session pins a GPU slot</b> for its whole duration (STT+TTS streaming, KV-cache resident) — unlike text, which is bursty and poolable. Concurrency/GPU is the cost driver.</li>
+<li><b>Self-host vs API per hop</b> — NVIDIA Parakeet/Canary on Modal is ~1–2 orders cheaper than proprietary STT at the cost of running infra (see <code>voice_agents_notes.md</code> tables; ~4¢/GPU-min). TTS (Cartesia) and LLM (OpenAI) often stay API for quality/latency.</li>
+<li><b>KV-cache compression</b> (~7×) → more concurrent voice sessions per GPU + longer context at the same cost. Directly raises sessions-per-GPU.</li>
+<li><b>Scheduler</b> — sessions → GPU slots; admit by KV-cache budget, not headcount (the <code>14_inference_server</code> thesis). Text and voice share the LLM pool but at different tiers/priorities.</li>
+<li><b>Continuous (in-flight) batching, NOT static fill-and-fire</b> — voice can't wait to fill a batch; the fill-wait <em>is</em> the latency. Admit each request into the <em>running</em> batch immediately and let the GPU interleave it with sequences already decoding — batch efficiency with zero fill-wait. <span class="warn">One engine, per-class policy — NOT two systems. Voice/chat ride the same continuously-batched GPU pool as bulk; they're just admitted immediately (latency-first), while bulk/offline accumulates ("fill 100 or 40ms") and backfills the idle slots at low priority (throughput-first). The cheap Batch API tier <em>is</em> that backfill.</span></li>
+<li><b>Paged KV (PagedAttention)</b> — KV cache in fixed non-contiguous blocks; admit/evict sessions by block availability. This is the mechanism that makes continuous batching and "admit by KV-cache budget" actually work without fragmentation.</li>
+<li><b>Prefill vs decode</b> — a joining session's prefill is compute-bound and can stall everyone else's decode loop (audible jitter for active calls). Chunk or disaggregate prefill so a new session doesn't add latency to live ones.</li>
+</ul>
+
+<h2>7. What I'd actually build at the start</h2>
+<pre class="diagram">
+ <span class="g">v0</span>  Twilio Media Streams ─▶ WS ─▶ [VAD ─▶ streaming STT ─▶ LLM ─▶ streaming TTS] ─▶ back
+     measure mouth-to-mouth end to end FIRST. you can't tune what you don't measure.
+ <span class="g">v1</span>  + real endpointing model (kill the naive silence timer) ........ biggest win
+ <span class="g">v2</span>  + barge-in (cancel + AEC3) ..................................... feels human
+ <span class="g">v3</span>  + speculative prefill on partials + prompt cache .............. shave TTFT
+ <span class="g">v4</span>  + backchannel/filler to mask p99 tail ......................... hide the spikes
+ <span class="g">v5</span>  + self-host STT on Modal, scheduler, KV-cache compression ..... cost at scale
+</pre>
+
+<div class="punch">
+<b>Say out loud:</b> "Mouth-to-mouth is a <em>pipelined waterfall</em>, not a sum —
+stream every stage, speculatively prefill on partials, start TTS on the first
+clause. The dominant cost is <em>endpointing</em> — deciding the human finished —
+not the models. And on Twilio the media path is PSTN 8kHz μ-law unless it's
+WebRTC, which sets the STT quality ceiling before any model choice."
+</div>
+
+</body>
+</html>
