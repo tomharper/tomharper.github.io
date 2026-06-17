@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Complexity Cheatsheet — Interview Prep</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #1a1a1a;
+    background: #fff;
+    line-height: 1.5;
+    font-size: 14px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 30px 40px;
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 6px;
+  }
+  .subtitle { font-size: 14px; color: #666; margin-bottom: 28px; }
+  h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1565C0;
+    border-bottom: 2px solid #1565C0;
+    padding-bottom: 4px;
+    margin-top: 32px;
+    margin-bottom: 14px;
+  }
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #333;
+    margin-top: 20px;
+    margin-bottom: 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 13px;
+  }
+  th {
+    background: #f5f5f5;
+    font-weight: 700;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #444;
+  }
+  td {
+    padding: 7px 10px;
+    border: 1px solid #ddd;
+    vertical-align: top;
+  }
+  tr:nth-child(even) { background: #fafafa; }
+  .O1 { color: #2E7D32; font-weight: 600; }
+  .Ologn { color: #558B2F; font-weight: 600; }
+  .On { color: #F57F17; font-weight: 600; }
+  .Onlogn { color: #E65100; font-weight: 600; }
+  .On2 { color: #C62828; font-weight: 600; }
+  .On3 { color: #B71C1C; font-weight: 600; }
+  .O2n { color: #880E4F; font-weight: 600; }
+  .Onk { color: #D84315; font-weight: 600; }
+  code {
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+  .tip {
+    background: #E3F2FD;
+    border-left: 4px solid #1565C0;
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-size: 13px;
+    border-radius: 0 4px 4px 0;
+  }
+  .warn {
+    background: #FFF3E0;
+    border-left: 4px solid #E65100;
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-size: 13px;
+    border-radius: 0 4px 4px 0;
+  }
+  .toc {
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    padding: 16px 24px;
+    border-radius: 6px;
+    margin-bottom: 24px;
+  }
+  .toc a { text-decoration: none; color: #1565C0; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { margin: 4px 0; }
+  .pattern-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-right: 4px;
+  }
+  .tag-green { background: #E8F5E9; color: #2E7D32; }
+  .tag-orange { background: #FFF3E0; color: #E65100; }
+  .tag-red { background: #FFEBEE; color: #C62828; }
+  .tag-blue { background: #E3F2FD; color: #1565C0; }
+  @media print {
+    body { padding: 15px 20px; font-size: 12px; }
+    h2 { margin-top: 20px; }
+    table { font-size: 11px; }
+    .no-break { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Complexity Cheatsheet</h1>
+<p class="subtitle">Data Structures, Algorithms & Patterns — Quick Reference for Coding Interviews</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#ds">1. Data Structure Operations</a></li>
+    <li><a href="#sorting">2. Sorting Algorithms</a></li>
+    <li><a href="#searching">3. Searching & Selection</a></li>
+    <li><a href="#graph">4. Graph Algorithms</a></li>
+    <li><a href="#tree">5. Tree Operations</a></li>
+    <li><a href="#dp">6. Dynamic Programming Patterns</a></li>
+    <li><a href="#patterns">7. Common Interview Patterns</a></li>
+    <li><a href="#java-kotlin">8. Java/Kotlin Collection Complexity</a></li>
+    <li><a href="#traps">9. Common Complexity Traps</a></li>
+    <li><a href="#recognize">10. How to Recognize Complexity</a></li>
+  </ul>
+</div>
+
+<!-- ============================================ -->
+<h2 id="ds">1. Data Structure Operations</h2>
+
+<table>
+  <tr>
+    <th>Data Structure</th>
+    <th>Access</th>
+    <th>Search</th>
+    <th>Insert</th>
+    <th>Delete</th>
+    <th>Space</th>
+    <th>Notes</th>
+  </tr>
+  <tr>
+    <td><strong>Array</strong></td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td>Insert/delete at end is O(1) amortized</td>
+  </tr>
+  <tr>
+    <td><strong>Linked List</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td>Insert/delete O(1) with reference to node</td>
+  </tr>
+  <tr>
+    <td><strong>Doubly Linked List</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td>Used in LRU cache with HashMap</td>
+  </tr>
+  <tr>
+    <td><strong>Stack</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td>LIFO — push/pop are O(1)</td>
+  </tr>
+  <tr>
+    <td><strong>Queue</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td>FIFO — enqueue/dequeue are O(1)</td>
+  </tr>
+  <tr>
+    <td><strong>Deque</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td class="On">O(n)</td>
+    <td>Both ends O(1). Monotonic deque for sliding window</td>
+  </tr>
+  <tr>
+    <td><strong>Hash Map</strong></td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="On">O(n)</td>
+    <td>*Amortized. Worst case O(n) with collisions</td>
+  </tr>
+  <tr>
+    <td><strong>Hash Set</strong></td>
+    <td>—</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="On">O(n)</td>
+    <td>*Amortized. Great for membership testing</td>
+  </tr>
+  <tr>
+    <td><strong>BST (balanced)</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td>Unbalanced degrades to O(n)</td>
+  </tr>
+  <tr>
+    <td><strong>Red-Black / AVL Tree</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td>Self-balancing. TreeMap/TreeSet in Java</td>
+  </tr>
+  <tr>
+    <td><strong>Min/Max Heap</strong></td>
+    <td class="O1">O(1) top</td>
+    <td class="On">O(n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td>PriorityQueue in Java/Kotlin. Top-K, median</td>
+  </tr>
+  <tr>
+    <td><strong>Trie</strong></td>
+    <td>—</td>
+    <td class="Onk">O(k)</td>
+    <td class="Onk">O(k)</td>
+    <td class="Onk">O(k)</td>
+    <td class="Onk">O(n·k)</td>
+    <td>k = key length. Autocomplete, prefix search</td>
+  </tr>
+  <tr>
+    <td><strong>Union-Find</strong></td>
+    <td>—</td>
+    <td class="O1">O(α(n))≈O(1)</td>
+    <td class="O1">O(α(n))≈O(1)</td>
+    <td>—</td>
+    <td class="On">O(n)</td>
+    <td>With path compression + union by rank</td>
+  </tr>
+  <tr>
+    <td><strong>Segment Tree</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td>—</td>
+    <td class="On">O(n)</td>
+    <td>Range queries + point updates</td>
+  </tr>
+  <tr>
+    <td><strong>Bloom Filter</strong></td>
+    <td>—</td>
+    <td class="O1">O(k)</td>
+    <td class="O1">O(k)</td>
+    <td>—</td>
+    <td class="O1">O(m)</td>
+    <td>Probabilistic. False positives, no false negatives</td>
+  </tr>
+</table>
+
+<!-- ============================================ -->
+<h2 id="sorting">2. Sorting Algorithms</h2>
+
+<table>
+  <tr>
+    <th>Algorithm</th>
+    <th>Best</th>
+    <th>Average</th>
+    <th>Worst</th>
+    <th>Space</th>
+    <th>Stable?</th>
+    <th>When to Use</th>
+  </tr>
+  <tr>
+    <td><strong>Quick Sort</strong></td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="On2">O(n²)</td>
+    <td class="Ologn">O(log n)</td>
+    <td>No</td>
+    <td>Default general purpose. In-place</td>
+  </tr>
+  <tr>
+    <td><strong>Merge Sort</strong></td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="On">O(n)</td>
+    <td>Yes</td>
+    <td>Stable sort needed. Linked lists. External sort</td>
+  </tr>
+  <tr>
+    <td><strong>Heap Sort</strong></td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="O1">O(1)</td>
+    <td>No</td>
+    <td>Guaranteed O(n log n), in-place</td>
+  </tr>
+  <tr>
+    <td><strong>Tim Sort</strong></td>
+    <td class="On">O(n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="On">O(n)</td>
+    <td>Yes</td>
+    <td>Java/Kotlin/Python default. Real-world data</td>
+  </tr>
+  <tr>
+    <td><strong>Counting Sort</strong></td>
+    <td class="On">O(n+k)</td>
+    <td class="On">O(n+k)</td>
+    <td class="On">O(n+k)</td>
+    <td class="On">O(k)</td>
+    <td>Yes</td>
+    <td>Small integer range. k = range of values</td>
+  </tr>
+  <tr>
+    <td><strong>Radix Sort</strong></td>
+    <td class="On">O(n·d)</td>
+    <td class="On">O(n·d)</td>
+    <td class="On">O(n·d)</td>
+    <td class="On">O(n+k)</td>
+    <td>Yes</td>
+    <td>Fixed-length integers/strings. d = digits</td>
+  </tr>
+  <tr>
+    <td><strong>Bucket Sort</strong></td>
+    <td class="On">O(n+k)</td>
+    <td class="On">O(n+k)</td>
+    <td class="On2">O(n²)</td>
+    <td class="On">O(n)</td>
+    <td>Yes</td>
+    <td>Uniformly distributed data</td>
+  </tr>
+  <tr>
+    <td><strong>Insertion Sort</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On2">O(n²)</td>
+    <td class="On2">O(n²)</td>
+    <td class="O1">O(1)</td>
+    <td>Yes</td>
+    <td>Small/nearly sorted arrays. Online sorting</td>
+  </tr>
+</table>
+
+<div class="tip">
+  <strong>Interview tip:</strong> When they say "sort," clarify if stability matters. Java's <code>Arrays.sort()</code> uses dual-pivot quicksort for primitives (unstable) and TimSort for objects (stable). Kotlin uses TimSort via <code>.sorted()</code>.
+</div>
+
+<!-- ============================================ -->
+<h2 id="searching">3. Searching & Selection</h2>
+
+<table>
+  <tr>
+    <th>Algorithm</th>
+    <th>Time</th>
+    <th>Space</th>
+    <th>Prerequisite</th>
+    <th>Use Case</th>
+  </tr>
+  <tr>
+    <td><strong>Binary Search</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="O1">O(1)</td>
+    <td>Sorted array</td>
+    <td>Search sorted data, search on answer space</td>
+  </tr>
+  <tr>
+    <td><strong>Linear Search</strong></td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td>None</td>
+    <td>Unsorted data, small arrays</td>
+  </tr>
+  <tr>
+    <td><strong>Quick Select</strong></td>
+    <td class="On">O(n) avg</td>
+    <td class="O1">O(1)</td>
+    <td>None</td>
+    <td>Kth largest/smallest without full sort</td>
+  </tr>
+  <tr>
+    <td><strong>Two Pointers</strong></td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td>Sorted (usually)</td>
+    <td>Pair sum, palindrome, container problems</td>
+  </tr>
+  <tr>
+    <td><strong>Binary Search on Answer</strong></td>
+    <td class="Ologn">O(log n · f(n))</td>
+    <td class="O1">O(1)</td>
+    <td>Monotonic check function</td>
+    <td>"Minimum maximum" / "maximum minimum" problems</td>
+  </tr>
+</table>
+
+<!-- ============================================ -->
+<h2 id="graph">4. Graph Algorithms</h2>
+
+<table>
+  <tr>
+    <th>Algorithm</th>
+    <th>Time</th>
+    <th>Space</th>
+    <th>Use Case</th>
+  </tr>
+  <tr>
+    <td><strong>BFS</strong></td>
+    <td class="On">O(V + E)</td>
+    <td class="On">O(V)</td>
+    <td>Shortest path (unweighted), level-order, nearest</td>
+  </tr>
+  <tr>
+    <td><strong>DFS</strong></td>
+    <td class="On">O(V + E)</td>
+    <td class="On">O(V)</td>
+    <td>Connected components, cycle detection, paths</td>
+  </tr>
+  <tr>
+    <td><strong>Topological Sort (Kahn's)</strong></td>
+    <td class="On">O(V + E)</td>
+    <td class="On">O(V)</td>
+    <td>Task scheduling, dependency ordering, course schedule</td>
+  </tr>
+  <tr>
+    <td><strong>Dijkstra's</strong></td>
+    <td class="Onlogn">O((V+E) log V)</td>
+    <td class="On">O(V)</td>
+    <td>Shortest path (non-negative weights)</td>
+  </tr>
+  <tr>
+    <td><strong>Bellman-Ford</strong></td>
+    <td class="On2">O(V · E)</td>
+    <td class="On">O(V)</td>
+    <td>Shortest path with negative weights</td>
+  </tr>
+  <tr>
+    <td><strong>Floyd-Warshall</strong></td>
+    <td class="On3">O(V³)</td>
+    <td class="On2">O(V²)</td>
+    <td>All-pairs shortest path</td>
+  </tr>
+  <tr>
+    <td><strong>Union-Find</strong></td>
+    <td class="On">O(V · α(V))</td>
+    <td class="On">O(V)</td>
+    <td>Connected components, cycle detection (undirected)</td>
+  </tr>
+  <tr>
+    <td><strong>Kruskal's (MST)</strong></td>
+    <td class="Onlogn">O(E log E)</td>
+    <td class="On">O(V)</td>
+    <td>Minimum spanning tree</td>
+  </tr>
+  <tr>
+    <td><strong>Prim's (MST)</strong></td>
+    <td class="Onlogn">O((V+E) log V)</td>
+    <td class="On">O(V)</td>
+    <td>Minimum spanning tree (dense graphs)</td>
+  </tr>
+</table>
+
+<div class="tip">
+  <strong>Interview tip:</strong> BFS = shortest path in unweighted graphs. DFS = easier to implement recursively but watch for stack overflow on large inputs. Always clarify: directed vs undirected? weighted? cycles?
+</div>
+
+<!-- ============================================ -->
+<h2 id="tree">5. Tree Operations</h2>
+
+<table>
+  <tr>
+    <th>Operation</th>
+    <th>BST (balanced)</th>
+    <th>BST (worst)</th>
+    <th>Heap</th>
+    <th>Trie</th>
+  </tr>
+  <tr>
+    <td><strong>Search</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="Onk">O(k)</td>
+  </tr>
+  <tr>
+    <td><strong>Insert</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Onk">O(k)</td>
+  </tr>
+  <tr>
+    <td><strong>Delete</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Onk">O(k)</td>
+  </tr>
+  <tr>
+    <td><strong>Find Min/Max</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><strong>Traversal</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n·k)</td>
+  </tr>
+</table>
+
+<h3>Tree Traversal Orders</h3>
+<table>
+  <tr>
+    <th>Traversal</th>
+    <th>Order</th>
+    <th>Use Case</th>
+  </tr>
+  <tr><td><strong>In-order</strong></td><td>Left → Root → Right</td><td>BST sorted order</td></tr>
+  <tr><td><strong>Pre-order</strong></td><td>Root → Left → Right</td><td>Serialize/copy tree</td></tr>
+  <tr><td><strong>Post-order</strong></td><td>Left → Right → Root</td><td>Delete tree, evaluate expressions</td></tr>
+  <tr><td><strong>Level-order (BFS)</strong></td><td>Level by level</td><td>Shortest path, level averages</td></tr>
+</table>
+
+<!-- ============================================ -->
+<h2 id="dp">6. Dynamic Programming Patterns</h2>
+
+<table>
+  <tr>
+    <th>Pattern</th>
+    <th>Time</th>
+    <th>Space</th>
+    <th>Classic Problems</th>
+  </tr>
+  <tr>
+    <td><strong>1D DP</strong></td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)–O(n)</td>
+    <td>Fibonacci, climbing stairs, house robber, max subarray</td>
+  </tr>
+  <tr>
+    <td><strong>2D DP</strong></td>
+    <td class="On2">O(n·m)</td>
+    <td class="On">O(n·m)</td>
+    <td>Edit distance, LCS, unique paths, knapsack</td>
+  </tr>
+  <tr>
+    <td><strong>Interval DP</strong></td>
+    <td class="On2">O(n²)–O(n³)</td>
+    <td class="On2">O(n²)</td>
+    <td>Burst balloons, matrix chain, palindrome partitioning</td>
+  </tr>
+  <tr>
+    <td><strong>Bitmask DP</strong></td>
+    <td class="O2n">O(2ⁿ · n)</td>
+    <td class="O2n">O(2ⁿ)</td>
+    <td>TSP, assignment problem, subset problems</td>
+  </tr>
+  <tr>
+    <td><strong>Tree DP</strong></td>
+    <td class="On">O(n)</td>
+    <td class="On">O(n)</td>
+    <td>Max path sum, diameter, house robber III</td>
+  </tr>
+  <tr>
+    <td><strong>Knapsack (0/1)</strong></td>
+    <td class="On2">O(n·W)</td>
+    <td class="On">O(W)</td>
+    <td>Subset sum, partition equal subset, target sum</td>
+  </tr>
+  <tr>
+    <td><strong>Unbounded Knapsack</strong></td>
+    <td class="On2">O(n·W)</td>
+    <td class="On">O(W)</td>
+    <td>Coin change, rod cutting</td>
+  </tr>
+  <tr>
+    <td><strong>LIS</strong></td>
+    <td class="Onlogn">O(n log n)</td>
+    <td class="On">O(n)</td>
+    <td>Longest increasing subsequence (patience sort)</td>
+  </tr>
+</table>
+
+<div class="tip">
+  <strong>Space optimization:</strong> Many 2D DP problems only depend on the previous row → can reduce space from O(n·m) to O(m). Always mention this in interviews.
+</div>
+
+<!-- ============================================ -->
+<h2 id="patterns">7. Common Interview Patterns</h2>
+
+<table>
+  <tr>
+    <th>Pattern</th>
+    <th>Typical Complexity</th>
+    <th>Key Data Structure</th>
+    <th>Recognize When...</th>
+  </tr>
+  <tr>
+    <td><strong>Sliding Window</strong></td>
+    <td class="On">O(n)</td>
+    <td>HashMap, Deque</td>
+    <td>Contiguous subarray/substring, "at most K"</td>
+  </tr>
+  <tr>
+    <td><strong>Two Pointers</strong></td>
+    <td class="On">O(n)</td>
+    <td>Array</td>
+    <td>Sorted input, pair finding, palindrome</td>
+  </tr>
+  <tr>
+    <td><strong>Fast & Slow Pointers</strong></td>
+    <td class="On">O(n)</td>
+    <td>Linked List</td>
+    <td>Cycle detection, middle of list, happy number</td>
+  </tr>
+  <tr>
+    <td><strong>Merge Intervals</strong></td>
+    <td class="Onlogn">O(n log n)</td>
+    <td>Array (sort first)</td>
+    <td>Overlapping intervals, meeting rooms</td>
+  </tr>
+  <tr>
+    <td><strong>Monotonic Stack</strong></td>
+    <td class="On">O(n)</td>
+    <td>Stack</td>
+    <td>Next greater/smaller element, histogram area</td>
+  </tr>
+  <tr>
+    <td><strong>Monotonic Deque</strong></td>
+    <td class="On">O(n)</td>
+    <td>Deque</td>
+    <td>Sliding window max/min</td>
+  </tr>
+  <tr>
+    <td><strong>Top-K Elements</strong></td>
+    <td class="Onlogn">O(n log k)</td>
+    <td>Min-Heap (size k)</td>
+    <td>"K largest", "K most frequent", "K closest"</td>
+  </tr>
+  <tr>
+    <td><strong>K-Way Merge</strong></td>
+    <td class="Onlogn">O(n log k)</td>
+    <td>Min-Heap</td>
+    <td>Merge K sorted lists/arrays</td>
+  </tr>
+  <tr>
+    <td><strong>Binary Search</strong></td>
+    <td class="Ologn">O(log n)</td>
+    <td>Array</td>
+    <td>Sorted data, "minimum that satisfies", rotated array</td>
+  </tr>
+  <tr>
+    <td><strong>Backtracking</strong></td>
+    <td class="O2n">O(2ⁿ) or O(n!)</td>
+    <td>Recursion + pruning</td>
+    <td>Permutations, combinations, subsets, N-queens</td>
+  </tr>
+  <tr>
+    <td><strong>BFS (Level-order)</strong></td>
+    <td class="On">O(V + E)</td>
+    <td>Queue</td>
+    <td>Shortest path, level traversal, word ladder</td>
+  </tr>
+  <tr>
+    <td><strong>DFS + Memo</strong></td>
+    <td>Varies</td>
+    <td>HashMap</td>
+    <td>Overlapping subproblems, top-down DP</td>
+  </tr>
+  <tr>
+    <td><strong>Union-Find</strong></td>
+    <td class="On">O(n · α(n))</td>
+    <td>Array</td>
+    <td>Connected components, "is connected", groups</td>
+  </tr>
+  <tr>
+    <td><strong>Prefix Sum</strong></td>
+    <td class="O1">O(1) query</td>
+    <td>Array</td>
+    <td>Range sum queries, subarray sum equals K</td>
+  </tr>
+</table>
+
+<!-- ============================================ -->
+<h2 id="java-kotlin">8. Java/Kotlin Collection Complexity</h2>
+
+<table>
+  <tr>
+    <th>Collection</th>
+    <th>get/contains</th>
+    <th>add/put</th>
+    <th>remove</th>
+    <th>Ordered?</th>
+    <th>Notes</th>
+  </tr>
+  <tr>
+    <td><code>ArrayList</code></td>
+    <td class="O1">O(1) index</td>
+    <td class="O1">O(1)*</td>
+    <td class="On">O(n)</td>
+    <td>Insert order</td>
+    <td>*Amortized. Remove from end O(1)</td>
+  </tr>
+  <tr>
+    <td><code>LinkedList</code></td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)</td>
+    <td class="O1">O(1)</td>
+    <td>Insert order</td>
+    <td>With iterator reference. Also implements Deque</td>
+  </tr>
+  <tr>
+    <td><code>HashMap</code> / <code>mutableMapOf</code></td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td>No</td>
+    <td>*Amortized. Most common in interviews</td>
+  </tr>
+  <tr>
+    <td><code>LinkedHashMap</code></td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td>Insert order</td>
+    <td>LRU cache with <code>removeEldestEntry</code></td>
+  </tr>
+  <tr>
+    <td><code>TreeMap</code> / <code>sortedMapOf</code></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td>Sorted by key</td>
+    <td>Red-Black tree. <code>floorKey</code>, <code>ceilingKey</code></td>
+  </tr>
+  <tr>
+    <td><code>HashSet</code> / <code>mutableSetOf</code></td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td>No</td>
+    <td>Membership testing</td>
+  </tr>
+  <tr>
+    <td><code>TreeSet</code> / <code>sortedSetOf</code></td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td>Sorted</td>
+    <td><code>floor()</code>, <code>ceiling()</code>, <code>first()</code>, <code>last()</code></td>
+  </tr>
+  <tr>
+    <td><code>PriorityQueue</code></td>
+    <td class="O1">O(1) peek</td>
+    <td class="Ologn">O(log n)</td>
+    <td class="Ologn">O(log n)</td>
+    <td>Heap order</td>
+    <td>Min-heap by default. <code>remove(obj)</code> is O(n)</td>
+  </tr>
+  <tr>
+    <td><code>ArrayDeque</code></td>
+    <td class="On">O(n)</td>
+    <td class="O1">O(1)*</td>
+    <td class="O1">O(1)*</td>
+    <td>Insert order</td>
+    <td>Faster than LinkedList as stack/queue</td>
+  </tr>
+</table>
+
+<div class="warn">
+  <strong>Kotlin gotcha:</strong> <code>listOf()</code> returns an immutable list. Use <code>mutableListOf()</code> for interview problems. <code>buildList { }</code> is idiomatic for building immutable results.
+</div>
+
+<!-- ============================================ -->
+<h2 id="traps">9. Common Complexity Traps</h2>
+
+<table>
+  <tr>
+    <th>Trap</th>
+    <th>What It Looks Like</th>
+    <th>Actual Complexity</th>
+  </tr>
+  <tr>
+    <td><strong>String concatenation in loop</strong></td>
+    <td><code>s += char</code> in a loop</td>
+    <td class="On2">O(n²) — strings are immutable, each concat copies. Use <code>StringBuilder</code></td>
+  </tr>
+  <tr>
+    <td><strong>List.contains() in loop</strong></td>
+    <td><code>if (list.contains(x))</code> in a loop</td>
+    <td class="On2">O(n²) — use HashSet for O(1) lookup</td>
+  </tr>
+  <tr>
+    <td><strong>Sorting inside loop</strong></td>
+    <td>Sort array, then loop and re-sort</td>
+    <td class="On2">O(n² log n) — sort once, or use heap</td>
+  </tr>
+  <tr>
+    <td><strong>HashMap with list values</strong></td>
+    <td><code>map[key] = map[key]!! + listOf(v)</code></td>
+    <td class="On2">O(n²) — appending to immutable list copies. Use <code>mutableListOf</code></td>
+  </tr>
+  <tr>
+    <td><strong>Substring in Java</strong></td>
+    <td><code>s.substring(i, j)</code></td>
+    <td class="On">O(n) — creates new string (since Java 7u6)</td>
+  </tr>
+  <tr>
+    <td><strong>PriorityQueue.remove(obj)</strong></td>
+    <td><code>pq.remove(element)</code></td>
+    <td class="On">O(n) — linear scan. <code>poll()</code> is O(log n)</td>
+  </tr>
+  <tr>
+    <td><strong>Recursive Fibonacci</strong></td>
+    <td><code>fib(n-1) + fib(n-2)</code></td>
+    <td class="O2n">O(2ⁿ) — without memoization. With memo: O(n)</td>
+  </tr>
+  <tr>
+    <td><strong>Generating all subsets</strong></td>
+    <td>Power set / backtracking</td>
+    <td class="O2n">O(2ⁿ) — inherently exponential, can't optimize</td>
+  </tr>
+</table>
+
+<!-- ============================================ -->
+<h2 id="recognize">10. How to Recognize Complexity</h2>
+
+<table>
+  <tr>
+    <th>If You See...</th>
+    <th>Think...</th>
+    <th>Examples</th>
+  </tr>
+  <tr>
+    <td>Single pass through array</td>
+    <td class="On">O(n)</td>
+    <td>Two pointers, sliding window, linear scan</td>
+  </tr>
+  <tr>
+    <td>Sort then scan</td>
+    <td class="Onlogn">O(n log n)</td>
+    <td>Merge intervals, meeting rooms</td>
+  </tr>
+  <tr>
+    <td>Divide in half each step</td>
+    <td class="Ologn">O(log n)</td>
+    <td>Binary search, balanced BST lookup</td>
+  </tr>
+  <tr>
+    <td>Nested loops over same array</td>
+    <td class="On2">O(n²)</td>
+    <td>Brute force pair finding, bubble sort</td>
+  </tr>
+  <tr>
+    <td>Heap with K elements</td>
+    <td class="Onlogn">O(n log k)</td>
+    <td>Top-K, K-way merge</td>
+  </tr>
+  <tr>
+    <td>Recursion with 2 branches</td>
+    <td class="O2n">O(2ⁿ)</td>
+    <td>Subsets, naive Fibonacci (add memo!)</td>
+  </tr>
+  <tr>
+    <td>Recursion with N branches</td>
+    <td class="O2n">O(n!)</td>
+    <td>Permutations, N-queens</td>
+  </tr>
+  <tr>
+    <td>Fill a 2D table</td>
+    <td class="On2">O(n·m)</td>
+    <td>Edit distance, LCS, grid DP</td>
+  </tr>
+  <tr>
+    <td>HashMap lookups in a loop</td>
+    <td class="On">O(n)</td>
+    <td>Two sum, group anagrams, frequency count</td>
+  </tr>
+  <tr>
+    <td>BFS/DFS over graph</td>
+    <td class="On">O(V + E)</td>
+    <td>Connected components, shortest path, islands</td>
+  </tr>
+</table>
+
+<div class="tip">
+  <strong>When asked "can you do better?":</strong> O(n²) → try sorting O(n log n) or HashMap O(n). O(n) with extra space → try two pointers O(1) space. O(n log n) → try counting/radix O(n). Always state the tradeoff.
+</div>
+
+<div style="margin-top: 30px; padding-top: 16px; border-top: 1px solid #ddd; font-size: 12px; color: #999;">
+  Tom Harper — Interview Complexity Cheatsheet — 2026
+</div>
+
+</body>
+</html>

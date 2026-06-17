@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAG Task Scheduler — Topological Sort</title>
+<style>
+  :root{--bg:#F0EEE6;--ink:#1A1915;--muted:#6B6658;--accent:#C9612F;
+        --soft:#E8D9CC;--line:#D8D3C7;--warn:#B45309;--warnbg:#FBEFD9;--code:#1f1d1a;}
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);margin:0;line-height:1.5;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;}
+  .wrap{max-width:980px;margin:0 auto;padding:3rem 1.5rem 5rem}
+  h1{font-size:2.2rem;letter-spacing:-.02em;margin:0 0 .3rem}
+  .sub{color:var(--muted);font-size:1.1rem;margin-bottom:2rem}
+  h2{font-size:1.35rem;margin:2.4rem 0 .8rem;letter-spacing:-.01em}
+  h3{font-size:1.0rem;color:var(--accent);margin:1.4rem 0 .5rem;text-transform:uppercase;letter-spacing:.04em}
+  p{margin:.5rem 0}
+  code{background:var(--soft);padding:.1rem .35rem;border-radius:4px;font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:var(--code);color:#e8e3da;border-radius:10px;padding:1.1rem 1.3rem;overflow-x:auto;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86rem;line-height:1.45}
+  pre .c{color:#8a8478;font-style:italic}    /* comment */
+  pre .k{color:#d98a5a}                       /* keyword */
+  pre .s{color:#9bb98a}                       /* string */
+  .punch{background:var(--soft);border-left:4px solid var(--accent);border-radius:8px;
+         padding:1rem 1.2rem;margin:1.2rem 0;font-size:1.06rem}
+  .warn{background:var(--warnbg);border:1px dashed var(--warn);border-radius:8px;
+        padding:.8rem 1.1rem;margin:1rem 0;color:var(--warn)}
+  table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.96rem}
+  th,td{border-bottom:1px solid var(--line);text-align:left;padding:.55rem .5rem;vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  td code{background:none;color:var(--accent);padding:0}
+  .pill{display:inline-block;background:var(--accent);color:#fff;border-radius:20px;
+        padding:.15rem .7rem;font-size:.78rem;font-weight:600;letter-spacing:.03em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="pill">interviews / anthropic-practice / 20</span>
+  <h1>DAG Task Scheduler</h1>
+  <div class="sub">Topological sort — the single most reused graph pattern. Course Schedule, build order, package install, job scheduling: all the same problem.</div>
+
+  <div class="punch">
+    <b>The one sentence:</b> in-degree 0 = ready to run now; finishing a task decrements its
+    dependents' in-degree; if you can't drain every node, there's a cycle. That covers
+    <b>ordering</b>, <b>cycle detection</b>, and <b>parallel scheduling</b>.
+  </div>
+
+  <h2>When to reach for it</h2>
+  <p>"Must happen before" · "depends on" · "prerequisites" · "build / install order" · "can you
+  finish all" · "minimum time with N workers." Anything with <b>ordering under constraints</b>.</p>
+
+  <h2>1 · Kahn (BFS on in-degree) — the default</h2>
+  <p>Detects cycles for free, and the level-by-level drain gives parallel scheduling. <code>O(V + E)</code>.</p>
+<pre><span class="k">from</span> collections <span class="k">import</span> deque
+
+<span class="k">def</span> topo_order(tasks, deps):           <span class="c"># deps = [(a, b)] → a before b</span>
+    adj   = {t: [] <span class="k">for</span> t <span class="k">in</span> tasks}
+    indeg = {t: 0  <span class="k">for</span> t <span class="k">in</span> tasks}
+    <span class="k">for</span> a, b <span class="k">in</span> deps:
+        adj[a].append(b); indeg[b] += <span class="s">1</span>
+
+    q = deque(t <span class="k">for</span> t <span class="k">in</span> tasks <span class="k">if</span> indeg[t] == <span class="s">0</span>)   <span class="c"># no prereqs → ready</span>
+    order = []
+    <span class="k">while</span> q:
+        t = q.popleft(); order.append(t)
+        <span class="k">for</span> nxt <span class="k">in</span> adj[t]:
+            indeg[nxt] -= <span class="s">1</span>
+            <span class="k">if</span> indeg[nxt] == <span class="s">0</span>: q.append(nxt)    <span class="c"># gated: all prereqs done</span>
+
+    <span class="k">if</span> len(order) != len(tasks):
+        <span class="k">raise</span> ValueError(<span class="s">"cycle — not a DAG"</span>)
+    <span class="k">return</span> order</pre>
+
+  <h3>Variants — trivial extensions of the same loop</h3>
+  <table>
+    <tr><th>Want</th><th>Change</th></tr>
+    <tr><td><b>Schedulable?</b> (Course Schedule I)</td><td>return <code>len(order) == len(tasks)</code></td></tr>
+    <tr><td><b>Min time, unlimited workers</b></td><td>drain the <em>whole</em> ready set per tick; count ticks = critical-path length</td></tr>
+    <tr><td><b>Order returned</b> (Course Schedule II)</td><td>that's <code>topo_order</code> itself</td></tr>
+  </table>
+<pre>    <span class="c"># parallel time: one full level = one time unit</span>
+    time = <span class="s">0</span>
+    <span class="k">while</span> q:
+        <span class="k">for</span> _ <span class="k">in</span> range(len(q)):          <span class="c"># drain the level you have right now</span>
+            t = q.popleft()
+            <span class="k">for</span> nxt <span class="k">in</span> adj[t]:
+                indeg[nxt] -= <span class="s">1</span>
+                <span class="k">if</span> indeg[nxt] == <span class="s">0</span>: q.append(nxt)
+        time += <span class="s">1</span></pre>
+
+  <h2>2 · Real scheduler — dependencies + workers + priorities</h2>
+  <p>The impressive version. Engine = <b>two heaps + a free-worker pool</b> (event-driven sim).
+     <code>O((V + E) log V)</code>.</p>
+  <div class="punch">
+    <code>ready</code> : min-heap by <b>(priority, task)</b> — what could start now.<br>
+    <code>running</code> : min-heap by <b>(finish_time, task, worker)</b> — jump time to the next finish.
+  </div>
+<pre><span class="k">import</span> heapq
+
+<span class="k">def</span> schedule_workers(tasks, deps, num_workers, duration=None, priority=None):
+    duration = duration <span class="k">or</span> {t: <span class="s">1</span> <span class="k">for</span> t <span class="k">in</span> tasks}
+    priority = priority <span class="k">or</span> {t: <span class="s">0</span> <span class="k">for</span> t <span class="k">in</span> tasks}   <span class="c"># lower = run first</span>
+    adj   = {t: [] <span class="k">for</span> t <span class="k">in</span> tasks}
+    indeg = {t: <span class="s">0</span>  <span class="k">for</span> t <span class="k">in</span> tasks}
+    <span class="k">for</span> a, b <span class="k">in</span> deps:
+        adj[a].append(b); indeg[b] += <span class="s">1</span>
+
+    ready = [(priority[t], t) <span class="k">for</span> t <span class="k">in</span> tasks <span class="k">if</span> indeg[t] == <span class="s">0</span>]
+    heapq.heapify(ready)
+    free, running, schedule, now = list(range(num_workers)), [], {}, <span class="s">0</span>
+
+    <span class="k">while</span> ready <span class="k">or</span> running:
+        <span class="k">while</span> ready <span class="k">and</span> free:              <span class="c"># fill every free worker, highest priority first</span>
+            _, t = heapq.heappop(ready)
+            w = free.pop()
+            schedule[t] = (now, now + duration[t], w)
+            heapq.heappush(running, (now + duration[t], t, w))
+        <span class="k">if</span> <span class="k">not</span> running: <span class="k">break</span>
+        now = running[<span class="s">0</span>][<span class="s">0</span>]                   <span class="c"># jump to next finish</span>
+        <span class="k">while</span> running <span class="k">and</span> running[<span class="s">0</span>][<span class="s">0</span>] == now:
+            _, t, w = heapq.heappop(running)
+            free.append(w)                       <span class="c"># worker freed</span>
+            <span class="k">for</span> nxt <span class="k">in</span> adj[t]:
+                indeg[nxt] -= <span class="s">1</span>
+                <span class="k">if</span> indeg[nxt] == <span class="s">0</span>: heapq.heappush(ready, (priority[nxt], nxt))
+
+    <span class="k">if</span> len(schedule) != len(tasks):
+        <span class="k">raise</span> ValueError(<span class="s">"cycle — not a DAG"</span>)
+    makespan = max((e <span class="k">for</span> _, e, _ <span class="k">in</span> schedule.values()), default=<span class="s">0</span>)
+    <span class="k">return</span> schedule, makespan</pre>
+
+  <div class="warn">
+    <b>Loop logic:</b> fill free workers from <code>ready</code> → jump <code>now</code> to the next
+    finishing task → free those workers + release their dependents → repeat. A cycle shows up as
+    "ready empties, running empties, but tasks remain" → caught by the length check.
+  </div>
+
+  <h2>3 · DFS variant (if they ask)</h2>
+  <p>Recursive post-order + 3-color marks. <span style="color:var(--muted)">WHITE = unseen, GRAY = on
+     the current stack (a GRAY neighbor = back edge = cycle), BLACK = done.</span> Append post-order, reverse.</p>
+<pre><span class="k">def</span> topo_order_dfs(tasks, deps):
+    adj = {t: [] <span class="k">for</span> t <span class="k">in</span> tasks}
+    <span class="k">for</span> a, b <span class="k">in</span> deps: adj[a].append(b)
+    WHITE, GRAY, BLACK = <span class="s">0</span>, <span class="s">1</span>, <span class="s">2</span>
+    color, out = {t: WHITE <span class="k">for</span> t <span class="k">in</span> tasks}, []
+
+    <span class="k">def</span> visit(t):
+        color[t] = GRAY
+        <span class="k">for</span> nxt <span class="k">in</span> adj[t]:
+            <span class="k">if</span> color[nxt] == GRAY: <span class="k">raise</span> ValueError(<span class="s">"cycle"</span>)
+            <span class="k">if</span> color[nxt] == WHITE: visit(nxt)
+        color[t] = BLACK; out.append(t)        <span class="c"># post-order</span>
+
+    <span class="k">for</span> t <span class="k">in</span> tasks:
+        <span class="k">if</span> color[t] == WHITE: visit(t)
+    out.reverse(); <span class="k">return</span> out</pre>
+
+  <h2>Relationship to the web crawler</h2>
+  <div class="warn">
+    Same skeleton (directed graph + visited/in-degree + queue), <b>opposite relationship to cycles</b>.
+    The crawler <b>dedups to survive cycles</b> (a visited set); topo sort <b>forbids cycles to produce an order</b>
+    (the in-degree counter). Crawling has no ordering constraint, so it's plain BFS — never bring topo
+    machinery to a coverage problem.
+  </div>
+
+  <div class="punch">
+    <b>Say it in the room:</b> "In-degree 0 = ready; pick by priority into free workers; advance time
+    to the next finish, which frees a worker and may make dependents ready." That one loop scales from
+    Course Schedule to a real job scheduler.
+  </div>
+
+</div>
+</body>
+</html>

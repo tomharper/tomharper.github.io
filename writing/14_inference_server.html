@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Inference Server — Batching & Disaggregation</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --accent: #e94560; --text: #eee; --muted: #a0a0b8; --green: #4ecca3; --yellow: #f0c040; --red: #e94560; --blue: #5b9bd5; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: var(--bg); color: var(--text); padding: 2rem; line-height: 1.6; max-width: 960px; margin: 0 auto; }
+  h1 { color: var(--accent); margin-bottom: 0.5rem; font-size: 1.5rem; }
+  .sub { color: var(--muted); margin-bottom: 2rem; font-size: 0.9rem; }
+  h2 { color: var(--green); margin: 2.2rem 0 1rem; font-size: 1.15rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }
+  h3 { color: var(--blue); margin: 1.2rem 0 0.5rem; font-size: 0.95rem; }
+  p { font-size: 0.88rem; margin: 0.6rem 0; }
+  b { color: var(--green); }
+  em { color: var(--yellow); font-style: normal; }
+  code { background: #0d0d1a; padding: 0.1rem 0.4rem; border-radius: 3px; color: var(--blue); font-size: 0.82rem; }
+
+  .answer-box { background: var(--card); border-left: 3px solid var(--accent); padding: 1.2rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+  .answer-box .question { color: var(--accent); font-weight: bold; margin-bottom: 0.8rem; font-size: 0.95rem; }
+  .step { display: flex; gap: 0.8rem; margin: 0.5rem 0; font-size: 0.86rem; }
+  .step-num { color: var(--accent); font-weight: bold; min-width: 1.5rem; }
+
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th { background: var(--accent); color: white; text-align: left; padding: 0.6rem 0.8rem; font-size: 0.82rem; }
+  td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #2a2a4a; font-size: 0.82rem; vertical-align: top; }
+  tr:hover td { background: rgba(78, 204, 163, 0.05); }
+  .k { color: var(--green); font-weight: bold; white-space: nowrap; }
+  .y { color: var(--yellow); }
+
+  pre.diagram { background: #0d0d1a; border: 1px solid #2a2a4a; border-radius: 6px; padding: 1.2rem; overflow-x: auto; font-size: 0.78rem; line-height: 1.35; color: var(--text); margin: 1rem 0; }
+  pre.diagram .cpu { color: var(--blue); }
+  pre.diagram .gpu { color: var(--accent); }
+  pre.diagram .note { color: var(--muted); }
+  pre.diagram .g { color: var(--green); }
+
+  .tag { display: inline-block; background: #0d0d1a; border: 1px solid var(--green); color: var(--green); padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.72rem; margin-right: 0.4rem; }
+  .punch { background: #0d0d1a; border: 1px dashed var(--accent); border-radius: 6px; padding: 0.9rem 1.1rem; margin: 1rem 0; color: var(--text); font-size: 0.88rem; }
+  .punch b { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>LLM Inference Server — Batching &amp; Disaggregation</h1>
+<div class="sub">The on-domain problem: thousands of single-line queries arrive concurrently; batch them onto a GPU efficiently. Code: <code>14_inference_server.py</code></div>
+
+<div class="punch">
+The whole interview in one line: <b>a request is not the unit of work — a token is.</b>
+Everything below follows from that. When to batch, how big, how to split the
+pipeline, and why fixed batches waste the GPU all reduce to "account for tokens, not requests."
+</div>
+
+<h2>The Pipeline — Stages With Different Resource Profiles</h2>
+<p>The key architectural move is recognizing that the path from text → text is made of stages that want <em>different hardware and scale on different curves</em>. Each one wants its own pool.</p>
+
+<pre class="diagram">
+  many cheap CPU workers                ONE scheduler          few expensive GPU workers           CPU again
+  ──────────────────────                ─────────────          ─────────────────────────          ─────────
+
+   query "hello"  ─┐
+   query "..."    ─┤   <span class="cpu">┌─────────────┐</span        <span class="g">┌───────────┐</span         <span class="gpu">┌──────────────────────┐</span        <span class="cpu">┌────────────┐</span
+   query "..."    ─┼─▶ <span class="cpu">│  TOKENIZE   │</span ─ids─▶  <span class="g">│  BATCH    │</span ─batch─▶ <span class="gpu">│  GPU: prefill+decode │</span ─ids─▶ <span class="cpu">│ DETOKENIZE │</span ─▶ stream out
+   query "..."    ─┤   <span class="cpu">│  (BPE, CPU) │</span        <span class="g">│ SCHEDULER │</span         <span class="gpu">│  (KV-cache bound)    │</span        <span class="cpu">│  (CPU)     │</span
+   query "..."    ─┘   <span class="cpu">└─────────────┘</span        <span class="g">└───────────┘</span         <span class="gpu">└──────────────────────┘</span        <span class="cpu">└────────────┘</span
+                        <span class="note">scales with</span           <span class="note">size OR timer</span        <span class="note">scales with TOKENS,</span             <span class="note">scales with</span
+                        <span class="note">request RATE</span          <span class="note">token budget</span        <span class="note">not request count</span               <span class="note">output RATE</span
+</pre>
+
+<p><span class="tag">why split</span> Tokenize is pure CPU (BPE merges, regex). Run it on the GPU box and it steals cycles and fights the GIL exactly when you need to keep the GPU fed — classic noisy neighbor. Split off, it scales independently: <b>N cheap CPU workers fan into M expensive GPU workers</b>, sized separately. Bonus: the GPU node receives <b>token IDs, not strings</b> — compact payload, no per-request CPU spike on the hot machine.</p>
+
+<p><span class="tag">the cost</span> Each split adds a <em>network hop + serialization boundary</em>. Token IDs are small so it's cheap, but it's a real failure mode. Rule: <b>only disaggregate a stage big enough to amortize the hop</b> — worth it on a 70B model, not on a tiny one.</p>
+
+<p><span class="tag">detok is special</span> Detokenization is harder to fully disaggregate because of <em>streaming</em>: BPE means one token can be a partial UTF-8 sequence, so you can't always render token→text in isolation — you need the running decode state. Detok often stays near the decode loop or ships incremental state.</p>
+
+<h2>Stage 1 — When To Fire a Batch (the trigger)</h2>
+<div class="answer-box">
+  <div class="question">Fire on size &ge; cap OR timer expired — whichever first.</div>
+  <div class="step"><span class="step-num">▸</span><span><b>Timer</b> caps <em>tail latency</em> when traffic is thin — a lone request doesn't wait forever for batch-mates that aren't coming.</span></div>
+  <div class="step"><span class="step-num">▸</span><span><b>Size cap</b> maximizes <em>throughput</em> when traffic is heavy — fill the batch and go.</span></div>
+  <div class="step"><span class="step-num">▸</span><span><b>One background loop owns the queue + timer.</b> Submitters just <code>put</code> a future and await it — they never race each other to assemble batches.</span></div>
+</div>
+<p>This is the part most candidates fumble: they try to make each submitter decide when to flush. Don't. A single consumer loop assembling batches is the clean pattern (<code>_collect()</code> in the code: block for the first item, then pull more until size cap, token budget, or deadline).</p>
+
+<h2>Stage 2 — How Big a Batch Can Be (capacity = memory)</h2>
+<div class="punch"><code>max_batch_size = 100</code> is a <b>guess</b>. The real limit isn't a request count — it's <b>KV-cache bytes</b>, and inputs are variable-length.</div>
+
+<p>A batch of 100 short prompts and 100 long prompts use wildly different memory. So you admit by a <b>token budget</b>, not headcount:</p>
+<pre class="diagram"><span class="g">capacity_tokens = total_kv_bytes / bytes_per_token</span>
+admit next request while  <span class="g">sum(seq_len for r in batch) + r.n_tokens &le; capacity_tokens</span>
+</pre>
+<p>In the code, <code>_collect()</code> tracks running <code>tokens</code> and, when the next request would blow <code>max_tokens</code>, <em>puts it back</em> for the following batch (<code>deferred_for_budget</code>). The demo's peak batch lands at 4080 tokens under a 4096 budget — full but never over.</p>
+
+<h3>How you actually find that number</h3>
+<table>
+  <tr><th>Method</th><th>What you do</th><th>Reality</th></tr>
+  <tr><td class="k">Static / offline</td><td>Sweep batch size, watch where latency knees up or you OOM, pin just under.</td><td class="y">Where most interview answers stop. Fine for fixed-length work.</td></tr>
+  <tr><td class="k">Memory-budgeted</td><td>Admit by summed sequence length vs KV-cache budget (above).</td><td>The right answer for LLMs — variable-length inputs make headcount meaningless.</td></tr>
+  <tr><td class="k">Continuous</td><td>Measure free KV blocks live; admit/evict every token step.</td><td>What vLLM / TGI actually do. See Stage 4.</td></tr>
+</table>
+
+<h2>Stage 3 — Prefill / Decode Disaggregation (inside the GPU)</h2>
+<p>The same "different profile → different pool" logic applies <em>within</em> the GPU work:</p>
+<table>
+  <tr><th></th><th>Prefill</th><th>Decode</th></tr>
+  <tr><td class="k">What</td><td>Process the whole prompt at once</td><td>Generate one token at a time, autoregressively</td></tr>
+  <tr><td class="k">Bound by</td><td class="y">Compute (FLOPs) — bursty, short</td><td class="y">Memory bandwidth — sustained, long</td></tr>
+  <tr><td class="k">Shape</td><td>Runs hot for a moment</td><td>Streams for the whole response</td></tr>
+</table>
+<p>SOTA stacks (vLLM, TensorRT-LLM, DeepSeek) put these on <b>separate GPU pools</b> and ship the <b>KV-cache</b> between them. The full disaggregation story:</p>
+<pre class="diagram"><span class="cpu">[CPU: tokenize]</span> ─▶ <span class="gpu">[GPU pool A: prefill]</span> ──KV transfer──▶ <span class="gpu">[GPU pool B: decode]</span> ─▶ <span class="cpu">[CPU: detokenize/stream]</span>
+   <span class="note">scales w/ rate</span        <span class="note">scales w/ prompt length</span              <span class="note">scales w/ concurrent seqs × output len</span      <span class="note">scales w/ output rate</span
+</pre>
+
+<h2>Stage 4 — Continuous Batching (why fixed batches waste the GPU)</h2>
+<div class="answer-box">
+  <div class="question">In autoregressive decode, requests finish at different times. A fixed batch waits for the SLOWEST sequence — short replies sit idle, GPU slots wasted.</div>
+  <div class="step"><span class="step-num">▸</span><span><b>Fixed:</b> take a batch, run until <em>all</em> done, then take the next. The one 500-token reply holds 99 finished 5-token replies hostage.</span></div>
+  <div class="step"><span class="step-num">▸</span><span><b>Continuous:</b> each token step, <em>evict</em> finished sequences and <em>admit</em> waiting ones into the freed KV slots. Batch composition changes every step; the GPU stays full.</span></div>
+</div>
+<p>The code's <code>continuous_batching_demo()</code> proves it on slot occupancy with mixed output lengths:</p>
+<pre class="diagram">  fixed-batch:      17 steps,  <span class="y">45%</span> slot utilization
+  continuous-batch: 11 steps,  <span class="g">70%</span> slot utilization
+</pre>
+
+<h2>The Progression To Say Out Loud</h2>
+<div class="answer-box">
+  <div class="step"><span class="step-num">1.</span><span>Start: <b>size + timer</b> batcher — throughput vs tail-latency knob.</span></div>
+  <div class="step"><span class="step-num">2.</span><span>Then: capacity is <b>memory, not headcount</b> → admit by token budget, because inputs are variable-length.</span></div>
+  <div class="step"><span class="step-num">3.</span><span>Then: <b>disaggregate</b> stages with distinct profiles → CPU tokenize pool, GPU prefill pool, GPU decode pool, CPU detok. Each scales on its own curve; cost is one hop per split.</span></div>
+  <div class="step"><span class="step-num">4.</span><span>Then: <b>continuous batching</b> — fixed batches waste the GPU waiting on the slowest sequence; admit/evict per token step instead.</span></div>
+</div>
+
+<div class="punch">
+<b>One-liner per axis:</b> tokenize scales with <em>request rate</em> · prefill scales with <em>prompt length</em> · decode scales with <em>concurrent sequences × output length</em>. Different curves → different pools. And the binding capacity everywhere downstream of tokenize is <em>KV-cache bytes</em>, which is why a token — not a request — is the unit of work.
+</div>
+
+</body>
+</html>
