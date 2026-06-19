@@ -5,35 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Real-Time Voice Agent — Latency Budget & Media Path (Twilio-shaped)</title>
 <style>
-  :root { --bg:#1a1a2e; --card:#16213e; --accent:#e94560; --text:#eee; --muted:#a0a0b8; --green:#4ecca3; --yellow:#f0c040; --red:#e94560; --blue:#5b9bd5; --purple:#a78bfa; }
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200; --red:#3b3f8f;
+  }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:'SF Mono','Fira Code',monospace; background:var(--bg); color:var(--text); padding:2rem; line-height:1.6; max-width:1000px; margin:0 auto; }
-  h1 { color:var(--accent); margin-bottom:0.3rem; font-size:1.5rem; }
-  .sub { color:var(--muted); margin-bottom:2rem; font-size:0.9rem; }
-  h2 { color:var(--green); margin:2.4rem 0 1rem; font-size:1.15rem; border-bottom:1px solid #333; padding-bottom:0.5rem; }
-  h3 { color:var(--blue); margin:1.4rem 0 0.5rem; font-size:0.98rem; }
-  p { font-size:0.88rem; margin:0.6rem 0; }
-  b { color:var(--green); } em { color:var(--yellow); font-style:normal; }
-  code { background:#0d0d1a; padding:0.1rem 0.4rem; border-radius:3px; color:var(--blue); font-size:0.82rem; }
-  ul { margin:0.5rem 0 0.5rem 1.4rem; font-size:0.86rem; } li { margin:0.3rem 0; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.62; max-width:1180px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.7rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--green); margin:2.8rem 0 1rem; font-size:1.3rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--blue); margin:1.5rem 0 0.5rem; font-size:1.05rem; }
+  h4 { color:var(--purple); margin:1rem 0 0.4rem; font-size:0.92rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--green); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--cyan); font-size:0.84rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul,ol { margin:0.5rem 0 0.7rem 1.5rem; font-size:0.9rem; } li { margin:0.32rem 0; }
+  a { color:var(--blue); }
 
-  table { width:100%; border-collapse:collapse; margin:1rem 0; }
-  th { background:var(--accent); color:#fff; text-align:left; padding:0.55rem 0.75rem; font-size:0.8rem; }
-  td { padding:0.55rem 0.75rem; border-bottom:1px solid #2a2a4a; font-size:0.82rem; vertical-align:top; }
-  tr:hover td { background:rgba(78,204,163,0.05); }
-  .num { color:var(--yellow); white-space:nowrap; font-weight:bold; }
-  .stage { color:var(--green); font-weight:bold; white-space:nowrap; }
-  .tot td { border-top:2px solid var(--accent); font-weight:bold; color:var(--text); }
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.84rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  .stage { color:var(--green); font-weight:700; white-space:nowrap; }
+  .num { color:var(--amber); white-space:nowrap; font-weight:700; }
+  .tot td { border-top:2px solid var(--accent); font-weight:700; background:var(--card2); }
 
-  pre.diagram { background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px; padding:1.2rem; overflow-x:auto; font-size:0.74rem; line-height:1.4; color:var(--text); margin:1rem 0; }
-  .a{color:var(--accent);} .g{color:var(--green);} .b{color:var(--blue);} .y{color:var(--yellow);} .m{color:var(--muted);} .p{color:var(--purple);}
-
-  .punch { background:#0d0d1a; border:1px dashed var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1rem 0; font-size:0.88rem; }
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
   .punch b { color:var(--accent); }
-  .box { background:var(--card); border-left:3px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
-  .box .t { color:var(--blue); font-weight:bold; margin-bottom:0.5rem; }
-  .tag { display:inline-block; background:#0d0d1a; border:1px solid var(--green); color:var(--green); padding:0.05rem 0.5rem; border-radius:10px; font-size:0.7rem; margin-right:0.4rem; }
-  .warn { color:var(--red); font-weight:bold; }
+  .box { background:var(--card); border-left:4px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
+  .box.g { border-color:var(--green); } .box.y { border-color:var(--amber); } .box.r { border-color:var(--red); }
+  .box .t { color:var(--blue); font-weight:700; margin-bottom:0.5rem; }
+  .box.g .t { color:var(--green); } .box.y .t { color:var(--amber); } .box.r .t { color:var(--red); }
+  .warn { color:var(--red); font-weight:700; }
+  .pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1rem; font-size:0.82rem; overflow-x:auto; color:var(--ink); font-family:'SF Mono',ui-monospace,monospace; line-height:1.5; }
+  .pre .c { color:var(--muted); }
+  svg { display:block; margin:1.2rem auto; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  svg text { font-family:-apple-system,'Segoe UI',sans-serif; }
+  .legend { font-size:0.78rem; color:var(--muted); text-align:center; margin:-0.5rem 0 1rem; }
 </style>
 </head>
 <body>
@@ -49,21 +60,57 @@ about spending that budget — and the dominant cost is not a model, it's
 <em>deciding the human actually finished talking</em>.
 </div>
 
-<h2>1. The end-to-end media path (where the milliseconds live)</h2>
+<h2>1. The end-to-end media path <span class="n">— where the milliseconds live</span></h2>
 
-<pre class="diagram">
- <span class="m">caller</span>                 <span class="a">TWILIO EDGE</span>                   <span class="g">YOUR AGENT</span>                 <span class="b">MODELS</span>
- ┌──────┐   PSTN/SIP   ┌─────────────┐   WS/media   ┌──────────────┐          ┌──────────┐
- │ phone │ ──μ-law────▶│ media server│ ──stream────▶│  orchestrator│ ────────▶│ STT      │
- │  or   │   8kHz      │  (regional  │   (20ms      │  VAD·endpoint│ ◀────────│ LLM      │
- │browser│ ──Opus─────▶│   POP)      │    frames)   │  barge-in    │ ────────▶│ TTS      │
- └──────┘   48kHz      └─────────────┘ ◀──audio─────└──────────────┘          └──────────┘
-    ▲                         │                            │                        │
-    └─────────────────────────┴────── playout ◀───────────┴── streamed audio ──────┘
+<svg viewBox="0 0 1080 320" role="img" aria-label="End-to-end media path from caller through Twilio edge to your agent and the models">
+  <defs>
+    <marker id="m1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+    <marker id="m1g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+  </defs>
 
- <span class="y">PSTN path</span>: narrowband 8kHz G.711 μ-law — fixed by the carrier. Worse STT input.
- <span class="y">WebRTC path</span>: wideband 48kHz Opus — better audio, but needs a browser/app.
-</pre>
+  <text x="120"  y="40" fill="#5d5d72" font-size="11" text-anchor="middle" font-weight="bold">caller</text>
+  <text x="375"  y="40" fill="#b35900" font-size="11" text-anchor="middle" font-weight="bold">TWILIO EDGE</text>
+  <text x="660"  y="40" fill="#0b7a55" font-size="11" text-anchor="middle" font-weight="bold">YOUR AGENT</text>
+  <text x="960"  y="40" fill="#1f5fa8" font-size="11" text-anchor="middle" font-weight="bold">MODELS</text>
+
+  <rect x="40" y="60" width="160" height="92" rx="6" fill="#f2f3f8" stroke="#5d5d72"/>
+  <text x="120" y="92"  fill="#1d1d2c" font-size="11" text-anchor="middle" font-weight="bold">phone or browser</text>
+  <text x="120" y="112" fill="#5d5d72" font-size="9"  text-anchor="middle">μ-law 8kHz (PSTN)</text>
+  <text x="120" y="128" fill="#5d5d72" font-size="9"  text-anchor="middle">or Opus 48kHz (WebRTC)</text>
+
+  <rect x="290" y="60" width="170" height="92" rx="6" fill="#fdf0e3" stroke="#b35900"/>
+  <text x="375" y="98"  fill="#b35900" font-size="11" text-anchor="middle" font-weight="bold">media server</text>
+  <text x="375" y="116" fill="#5d5d72" font-size="9"  text-anchor="middle">regional POP</text>
+
+  <rect x="560" y="60" width="200" height="92" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="660" y="92"  fill="#0b7a55" font-size="11" text-anchor="middle" font-weight="bold">orchestrator</text>
+  <text x="660" y="110" fill="#5d5d72" font-size="9"  text-anchor="middle">VAD · endpoint</text>
+  <text x="660" y="124" fill="#5d5d72" font-size="9"  text-anchor="middle">barge-in</text>
+
+  <rect x="860" y="60" width="160" height="92" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="940" y="90"  fill="#1f5fa8" font-size="11" text-anchor="middle" font-weight="bold">STT</text>
+  <text x="940" y="110" fill="#1f5fa8" font-size="11" text-anchor="middle" font-weight="bold">LLM</text>
+  <text x="940" y="130" fill="#1f5fa8" font-size="11" text-anchor="middle" font-weight="bold">TTS</text>
+
+  <line x1="200" y1="92"  x2="288" y2="92"  stroke="#5d5d72" marker-end="url(#m1)"/>
+  <text x="244" y="84" fill="#5d5d72" font-size="8.5" text-anchor="middle">PSTN/SIP</text>
+  <line x1="460" y1="92"  x2="558" y2="92"  stroke="#5d5d72" marker-end="url(#m1)"/>
+  <text x="509" y="84" fill="#5d5d72" font-size="8.5" text-anchor="middle">WS · 20ms frames</text>
+  <line x1="760" y1="92"  x2="858" y2="92"  stroke="#5d5d72" marker-end="url(#m1)"/>
+
+  <line x1="858" y1="124" x2="762" y2="124" stroke="#0b7a55" marker-end="url(#m1g)"/>
+  <line x1="558" y1="124" x2="462" y2="124" stroke="#0b7a55" marker-end="url(#m1g)"/>
+  <text x="509" y="142" fill="#0b7a55" font-size="8.5" text-anchor="middle">streamed audio</text>
+  <line x1="288" y1="124" x2="200" y2="124" stroke="#0b7a55" marker-end="url(#m1g)"/>
+  <text x="244" y="142" fill="#0b7a55" font-size="8.5" text-anchor="middle">playout</text>
+
+  <rect x="40" y="200" width="980" height="44" rx="6" fill="#fbf4e6" stroke="#ecdcb6"/>
+  <text x="60" y="218" fill="#946200" font-size="10" font-weight="bold">PSTN path:</text>
+  <text x="135" y="218" fill="#5d5d72" font-size="10">narrowband 8kHz G.711 μ-law — fixed by the carrier. Worse STT input.</text>
+  <text x="60" y="236" fill="#946200" font-size="10" font-weight="bold">WebRTC path:</text>
+  <text x="148" y="236" fill="#5d5d72" font-size="10">wideband 48kHz Opus — better audio, but needs a browser/app.</text>
+</svg>
+<div class="legend"><b style="color:#5d5d72">solid</b> = inbound media (caller → models) · <b style="color:#0b7a55">green</b> = the return leg (streamed TTS audio → playout). The amber band is the codec ceiling: the ingress format caps STT quality before any model choice.</div>
 
 <div class="box">
 <div class="t">Twilio-specific reality (the part most candidates miss)</div>
@@ -97,23 +144,58 @@ speed; the human-perceived lag is mostly <em>how long you wait in silence to be
 sure they finished</em>. Halving endpointing beats halving the LLM.
 </div>
 
-<h2>3. Why you STREAM and PIPELINE (the waterfall)</h2>
+<h2>3. Why you STREAM and PIPELINE <span class="n">— the waterfall</span></h2>
 
 <p>You never run the stages serially. STT emits partials <em>while the user talks</em>;
 the LLM can be <em>speculatively prefilled</em> on partials; TTS starts on the
 first clause while the LLM is still generating. The budget is a <b>waterfall, not
 a sum</b>.</p>
 
-<pre class="diagram">
- user speaking ──────────────████████████│(stops)
- STT partials  ──────────────░░░░░░░░░░░░│▓ final          <span class="m">(live; tail finalizes ~50ms)</span>
- endpointing                            │└──wait──┘         <span class="a">◀ the gate: 300ms of "are they done?"</span>
- LLM prefill (on partials) ──░░░░░░░░░░░░│                  <span class="m">(speculative; warm KV-cache before final)</span>
- LLM decode                             │ ▓▓▓▓▓             <span class="m">(TTFT fast because prefill already paid)</span>
- TTS (first clause)                     │   ▓▓▓▓▓▓▓         <span class="m">(starts on 1st sentence, not full reply)</span>
- audio out                             │     ▓▓▓▓▓▓▓▓▶ <span class="g">user hears bot</span>
-                                        │◀────── ~550ms ──────▶
-</pre>
+<svg viewBox="0 0 1080 320" role="img" aria-label="Pipelined waterfall of the mouth-to-mouth latency budget">
+  <defs>
+    <marker id="w1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#946200"/></marker>
+    <marker id="w1g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+  </defs>
+  <text x="20" y="24" fill="#5d5d72" font-size="11">user stops speaking →</text>
+  <line x1="400" y1="30" x2="400" y2="290" stroke="#946200" stroke-dasharray="4 4"/>
+  <text x="400" y="44" fill="#946200" font-size="10" text-anchor="middle" font-weight="bold">endpoint (the gate)</text>
+
+  <g font-size="10">
+    <text x="20" y="74" fill="#0b7a55">user speaking</text>
+    <rect x="155" y="64" width="245" height="14" rx="3" fill="#0b7a55" opacity="0.45"/>
+
+    <text x="20" y="102" fill="#1f5fa8">STT partials (live)</text>
+    <rect x="155" y="92" width="245" height="14" rx="3" fill="#1f5fa8" opacity="0.4"/>
+    <rect x="400" y="92" width="30" height="14" rx="3" fill="#1f5fa8"/>
+    <text x="440" y="103" fill="#5d5d72">final ~50ms tail</text>
+
+    <text x="20" y="130" fill="#3b3f8f">endpointing wait</text>
+    <rect x="330" y="120" width="70" height="14" rx="3" fill="#3b3f8f"/>
+    <text x="365" y="131" fill="#fff" font-size="9" text-anchor="middle">300ms</text>
+    <text x="440" y="131" fill="#5d5d72">"are they done?"</text>
+
+    <text x="20" y="158" fill="#6a2cd0">LLM prefill (speculative)</text>
+    <rect x="155" y="148" width="245" height="14" rx="3" fill="#6a2cd0" opacity="0.35"/>
+    <text x="440" y="159" fill="#5d5d72">on partials → warm KV-cache before final</text>
+
+    <text x="20" y="186" fill="#6a2cd0">LLM decode</text>
+    <rect x="430" y="176" width="90" height="14" rx="3" fill="#6a2cd0"/>
+    <text x="528" y="187" fill="#5d5d72">TTFT fast — prefill already paid</text>
+
+    <text x="20" y="214" fill="#1f5fa8">TTS (first clause)</text>
+    <rect x="490" y="204" width="110" height="14" rx="3" fill="#1f5fa8" opacity="0.65"/>
+    <text x="545" y="215" fill="#fff" font-size="9" text-anchor="middle">TTFB 120ms</text>
+
+    <text x="20" y="242" fill="#0d6e87">audio out + playout</text>
+    <rect x="570" y="232" width="70" height="14" rx="3" fill="#0d6e87"/>
+  </g>
+
+  <line x1="640" y1="30" x2="640" y2="290" stroke="#0b7a55"/>
+  <text x="645" y="262" fill="#0b7a55" font-size="11" font-weight="bold">user hears bot</text>
+  <path d="M400,278 L638,278" stroke="#946200" marker-end="url(#w1)"/>
+  <text x="519" y="298" fill="#946200" font-size="11" text-anchor="middle" font-weight="bold">perceived ≈ 550ms</text>
+</svg>
+<div class="legend">The bars that start <em>before</em> the endpoint line (STT partials, speculative prefill) are work done while the user is still talking — that overlap is why wall-clock is a waterfall, not a sum. Only the endpointing wait, the final STT tail, decode, TTS first-byte, and playout fall to the right of the gate.</div>
 
 <ul>
 <li><b>Streaming STT</b> → the transcript is basically ready at endpoint; you pay only the finalization tail, not the whole utterance.</li>
@@ -122,7 +204,7 @@ a sum</b>.</p>
 <li><b>Prompt caching</b> → the system prompt + conversation history are a cache hit every turn; only the new turn is fresh prefill. (KV-cache reuse — ties to <code>14_inference_server</code>.)</li>
 </ul>
 
-<h2>4. Endpointing &amp; turn-taking (the hard, high-leverage part)</h2>
+<h2>4. Endpointing &amp; turn-taking <span class="n">— the hard, high-leverage part</span></h2>
 
 <div class="box">
 <div class="t">The core question: did they STOP, or just PAUSE?</div>
@@ -142,7 +224,7 @@ endpointing model</b> (semantic + acoustic), not raw VAD.</p>
 <h3>Barge-in (interrupt the bot)</h3>
 <p>When the caller talks over the bot, two things must happen in <em>single-frame</em>
 latency:</p>
-<ol style="margin-left:1.4rem; font-size:0.86rem;">
+<ol>
 <li><b>Stop TTS instantly</b> — cancel playback + flush the outbound audio buffer (this is <code>10_audio_pipeline_interruptible.py</code> — one <code>asyncio.Event</code>, race every await against it).</li>
 <li><b>AEC3</b> must already be running so the bot's own voice in the mic isn't mistaken for barge-in. Without echo cancellation, the bot interrupts itself.</li>
 <li><b>Re-sequence</b> — the caller's interruption is a new high-priority event; discard the bot's half-spoken turn from context or mark it truncated so the LLM knows it wasn't fully heard.</li>
@@ -163,7 +245,7 @@ line dropped." A cheap <em>backchannel</em> ("mm-hm", "let me pull that up")
 buys you LLM time and feels natural. Latency you can't remove, you can <em>mask</em>.
 </div>
 
-<h2>6. Scaling &amp; economics (the resource-scheduler view)</h2>
+<h2>6. Scaling &amp; economics <span class="n">— the resource-scheduler view</span></h2>
 <ul>
 <li><b>A voice session pins a GPU slot</b> for its whole duration (STT+TTS streaming, KV-cache resident) — unlike text, which is bursty and poolable. Concurrency/GPU is the cost driver.</li>
 <li><b>Self-host vs API per hop</b> — NVIDIA Parakeet/Canary on Modal is ~1–2 orders cheaper than proprietary STT at the cost of running infra (see <code>voice_agents_notes.md</code> tables; ~4¢/GPU-min). TTS (Cartesia) and LLM (OpenAI) often stay API for quality/latency.</li>
@@ -175,15 +257,45 @@ buys you LLM time and feels natural. Latency you can't remove, you can <em>mask<
 </ul>
 
 <h2>7. What I'd actually build at the start</h2>
-<pre class="diagram">
- <span class="g">v0</span>  Twilio Media Streams ─▶ WS ─▶ [VAD ─▶ streaming STT ─▶ LLM ─▶ streaming TTS] ─▶ back
-     measure mouth-to-mouth end to end FIRST. you can't tune what you don't measure.
- <span class="g">v1</span>  + real endpointing model (kill the naive silence timer) ........ biggest win
- <span class="g">v2</span>  + barge-in (cancel + AEC3) ..................................... feels human
- <span class="g">v3</span>  + speculative prefill on partials + prompt cache .............. shave TTFT
- <span class="g">v4</span>  + backchannel/filler to mask p99 tail ......................... hide the spikes
- <span class="g">v5</span>  + self-host STT on Modal, scheduler, KV-cache compression ..... cost at scale
-</pre>
+<svg viewBox="0 0 1080 360" role="img" aria-label="Build order v0 through v5, each stage the biggest marginal latency or quality win">
+  <defs>
+    <marker id="b1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+  </defs>
+
+  <rect x="40" y="40" width="1000" height="56" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="62" y="64" fill="#0b7a55" font-size="12" font-weight="bold">v0</text>
+  <text x="95" y="64" fill="#1d1d2c" font-size="10.5">Twilio Media Streams → WS → [ VAD → streaming STT → LLM → streaming TTS ] → back</text>
+  <text x="95" y="82" fill="#5d5d72" font-size="9.5">measure mouth-to-mouth end to end FIRST — you can't tune what you don't measure</text>
+
+  <rect x="40" y="106" width="1000" height="40" rx="6" fill="#f2f3f8" stroke="#0b7a55"/>
+  <text x="62" y="131" fill="#0b7a55" font-size="12" font-weight="bold">v1</text>
+  <text x="95" y="131" fill="#1d1d2c" font-size="10.5">+ real endpointing model (kill the naive silence timer)</text>
+  <text x="900" y="131" fill="#946200" font-size="9.5" text-anchor="end" font-weight="bold">biggest win</text>
+
+  <rect x="40" y="156" width="1000" height="40" rx="6" fill="#f2f3f8" stroke="#0b7a55"/>
+  <text x="62" y="181" fill="#0b7a55" font-size="12" font-weight="bold">v2</text>
+  <text x="95" y="181" fill="#1d1d2c" font-size="10.5">+ barge-in (cancel + AEC3)</text>
+  <text x="900" y="181" fill="#5d5d72" font-size="9.5" text-anchor="end">feels human</text>
+
+  <rect x="40" y="206" width="1000" height="40" rx="6" fill="#f2f3f8" stroke="#0b7a55"/>
+  <text x="62" y="231" fill="#0b7a55" font-size="12" font-weight="bold">v3</text>
+  <text x="95" y="231" fill="#1d1d2c" font-size="10.5">+ speculative prefill on partials + prompt cache</text>
+  <text x="900" y="231" fill="#5d5d72" font-size="9.5" text-anchor="end">shave TTFT</text>
+
+  <rect x="40" y="256" width="1000" height="40" rx="6" fill="#f2f3f8" stroke="#0b7a55"/>
+  <text x="62" y="281" fill="#0b7a55" font-size="12" font-weight="bold">v4</text>
+  <text x="95" y="281" fill="#1d1d2c" font-size="10.5">+ backchannel/filler to mask p99 tail</text>
+  <text x="900" y="281" fill="#5d5d72" font-size="9.5" text-anchor="end">hide the spikes</text>
+
+  <rect x="40" y="306" width="1000" height="40" rx="6" fill="#f2f3f8" stroke="#0b7a55"/>
+  <text x="62" y="331" fill="#0b7a55" font-size="12" font-weight="bold">v5</text>
+  <text x="95" y="331" fill="#1d1d2c" font-size="10.5">+ self-host STT on Modal, scheduler, KV-cache compression</text>
+  <text x="900" y="331" fill="#5d5d72" font-size="9.5" text-anchor="end">cost at scale</text>
+
+  <line x1="970" y1="96" x2="970" y2="306" stroke="#0b7a55" stroke-dasharray="4 3" marker-end="url(#b1)"/>
+  <text x="1005" y="205" fill="#0b7a55" font-size="9.5" text-anchor="middle" font-weight="bold" transform="rotate(90 1005 205)">ship order</text>
+</svg>
+<div class="legend">Each version adds the single highest-leverage change next: v0 is the measurable baseline, v1 (real endpointing) is the biggest latency win, and cost-at-scale work waits until v5.</div>
 
 <div class="punch">
 <b>Say out loud:</b> "Mouth-to-mouth is a <em>pipelined waterfall</em>, not a sum —
