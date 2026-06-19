@@ -60,7 +60,7 @@ Everything below follows from that. When to batch, how big, how to split the
 pipeline, and why fixed batches waste the GPU all reduce to "account for tokens, not requests."
 </div>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>The Pipeline <span class="n">— stages with different resource profiles</span></h2>
 <p>The key architectural move is recognizing that the path from text → text is made of stages that want <em>different hardware and scale on different curves</em>. Each one wants its own pool.</p>
 
@@ -137,7 +137,7 @@ pipeline, and why fixed batches waste the GPU all reduce to "account for tokens,
 
 <p><b>Detok is special.</b> Detokenization is harder to fully disaggregate because of <em>streaming</em>: BPE means one token can be a partial UTF-8 sequence, so you can't always render token→text in isolation — you need the running decode state. Detok often stays near the decode loop or ships incremental state.</p>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>Stage 1 — When To Fire a Batch <span class="n">— the trigger</span></h2>
 <div class="box"><div class="t">Fire on size &ge; cap OR timer expired — whichever first.</div>
 <ul>
@@ -147,7 +147,7 @@ pipeline, and why fixed batches waste the GPU all reduce to "account for tokens,
 </ul></div>
 <p>This is the part most candidates fumble: they try to make each submitter decide when to flush. Don't. A single consumer loop assembling batches is the clean pattern (<code>_collect()</code> in the code: block for the first item, then pull more until size cap, token budget, or deadline).</p>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>Stage 2 — How Big a Batch Can Be <span class="n">— capacity = memory</span></h2>
 <div class="punch"><code>max_batch_size = 100</code> is a <b>guess</b>. The real limit isn't a request count — it's <b>KV-cache bytes</b>, and inputs are variable-length.</div>
 
@@ -164,7 +164,7 @@ admit next request while  sum(seq_len for r in batch) + r.n_tokens &le; capacity
   <tr><td class="tool">Continuous</td><td>Measure free KV blocks live; admit/evict every token step.</td><td>What vLLM / TGI actually do. See Stage 4.</td></tr>
 </table>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>Stage 3 — Prefill / Decode Disaggregation <span class="n">— inside the GPU</span></h2>
 <p>The same "different profile → different pool" logic applies <em>within</em> the GPU work:</p>
 <table>
@@ -212,7 +212,7 @@ admit next request while  sum(seq_len for r in batch) + r.n_tokens &le; capacity
 </svg>
 <div class="legend"><b style="color:#6a2cd0">purple</b> = the KV-cache shipped between pools. Prefill is compute-bound and bursty; decode is memory-bandwidth-bound and sustained — distinct curves, so SOTA stacks give each its own GPU pool.</div>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>Stage 4 — Continuous Batching <span class="n">— why fixed batches waste the GPU</span></h2>
 <div class="box"><div class="t">In autoregressive decode, requests finish at different times. A fixed batch waits for the SLOWEST sequence — short replies sit idle, GPU slots wasted.</div>
 <ul>
@@ -272,7 +272,7 @@ admit next request while  sum(seq_len for r in batch) + r.n_tokens &le; capacity
 <div class="pre">fixed-batch:      17 steps,  <span class="c">45% slot utilization</span>
 continuous-batch: 11 steps,  <span class="c">70% slot utilization</span></div>
 
-<!-- ════════════════════════════════════════ -->
+<!-- ---------------------------------------- -->
 <h2>The Progression To Say Out Loud</h2>
 <div class="box g"><div class="t">Four moves, in order</div>
 <ol>
