@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multimodal Fusion &amp; Co-Sequencing</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200; --red:#3b3f8f;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.62; max-width:1180px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.7rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--green); margin:2.8rem 0 1rem; font-size:1.3rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--blue); margin:1.5rem 0 0.5rem; font-size:1.05rem; }
+  h4 { color:var(--purple); margin:1rem 0 0.4rem; font-size:0.92rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--green); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--cyan); font-size:0.84rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul,ol { margin:0.5rem 0 0.7rem 1.5rem; font-size:0.9rem; } li { margin:0.32rem 0; }
+  a { color:var(--blue); }
+
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.84rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  .tool { color:var(--green); font-weight:700; white-space:nowrap; }
+  .alt { color:var(--blue); }
+  .num { color:var(--amber); white-space:nowrap; font-weight:700; }
+  .api { color:var(--orange); font-weight:600; } .self { color:var(--cyan); font-weight:600; }
+  .tot td { border-top:2px solid var(--accent); font-weight:700; background:var(--card2); }
+
+  .toc { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem 1.4rem; margin:1rem 0 2rem; column-count:2; column-gap:2rem; font-size:0.85rem; }
+  .toc a { color:var(--ink); text-decoration:none; display:block; padding:0.16rem 0; }
+  .toc a:hover { color:var(--accent); }
+  .toc .lead { color:var(--accent); font-weight:700; }
+
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
+  .box.g { border-color:var(--green); } .box.y { border-color:var(--amber); } .box.r { border-color:var(--red); }
+  .box .t { color:var(--blue); font-weight:700; margin-bottom:0.5rem; }
+  .box.g .t { color:var(--green); } .box.y .t { color:var(--amber); } .box.r .t { color:var(--red); }
+  .warn { color:var(--red); font-weight:700; }
+  .pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1rem; font-size:0.82rem; overflow-x:auto; color:var(--ink); font-family:'SF Mono',ui-monospace,monospace; line-height:1.5; }
+  .pre .c { color:var(--muted); }
+  svg { display:block; margin:1.2rem auto; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  svg text { font-family:-apple-system,'Segoe UI',sans-serif; }
+  .legend { font-size:0.78rem; color:var(--muted); text-align:center; margin:-0.5rem 0 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Multimodal Conversational Agent — Fusion &amp; Co-Sequencing Design</h1>
+<div class="sub">A design doc for a messaging service that handles <b>text, voice, and video at once</b> and can <b>escalate</b> between them, where the streams carry <b>complementary</b> information (words, tone, what's being shown) that must be <b>fused on a shared event-time timeline</b> before reaching the LLM. Centerpiece: <b>multimodal fusion + co-sequencing.</b> Escalation tiers and batch transcription are supporting sections.</div>
+
+<!-- ==== -->
+<h2 id="thesis">0 · The thesis (say this first)</h2>
+<div class="punch">
+<b>Everything becomes tokens at the end — but the modalities are not redundant
+transcripts to dedup. They are complementary signals to <em>fuse</em>.</b> Each
+specialist model compresses its channel into structured annotations on a
+shared event-time timeline; a sequencer aligns and bundles co-temporal
+annotations into enriched tokens; the LLM consumes one fused stream. The two
+hard parts are (a) <b>aligning streams that have different latencies and rates on
+<em>event-time</em></b> and (b) <b>choosing what survives each channel's compression</b> —
+because the whole point is to keep the signal that lives in the audio/video
+but not the words.
+</div>
+<p>Two reframes that drive everything below:</p>
+<ol>
+<li><b>Co-sequencing is a stream-join on event-time, not processing-time.</b> (Flink/Dataflow watermark model.)</li>
+<li><b>Escalation is a resource-tier upgrade of one persistent session.</b> Text = cheap async tier; voice/video = expensive real-time tier. Same brain, different transport + latency budget + cost.</li>
+</ol>
+
+<!-- ==== -->
+<h2 id="naive">1 · Why naive ordering is wrong</h2>
+<p>The modalities don't carry the same thing:</p>
+<table>
+<tr><th>Channel</th><th>Carries</th><th>Example signal</th></tr>
+<tr><td class="tool">text / STT</td><td><b>propositional</b> — the literal words</td><td>"this is fine"</td></tr>
+<tr><td class="tool">audio prosody</td><td><b>affective / pragmatic</b> — tone, stress, hesitation</td><td>clipped, ↑pitch, anger 0.8</td></tr>
+<tr><td class="tool">video</td><td><b>referential / deictic</b> — what's shown / pointed at, expression</td><td>points at a fee, frustrated face</td></tr>
+</table>
+<p><code>"this is fine"</code> + angry tone + frustrated face is a <b>complaint</b>. The
+transcript alone reads as <b>approval</b>. For a bank, that's the difference
+between catching a churning customer and missing them. The non-verbal signal is
+<em>exactly</em> the thing absent from the words — so you cannot flatten to text and
+order by arrival.</p>
+
+<!-- ==== -->
+<h2 id="eventtime">2 · The core problem: event-time vs processing-time</h2>
+<p>Streams arrive on separate async paths with <b>different, structural latencies</b>:</p>
+<svg viewBox="0 0 1080 320" role="img" aria-label="Event-time vs processing-time: text, speech, gesture arriving at different latencies">
+  <defs>
+    <marker id="fa" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+    <marker id="faT" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6a2cd0"/></marker>
+    <marker id="faG" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+    <marker id="faV" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b35900"/></marker>
+  </defs>
+
+  <!-- the single real moment at edge -->
+  <line x1="300" y1="30" x2="300" y2="280" stroke="#946200" stroke-dasharray="4 4" opacity="0.6"/>
+  <text x="300" y="22" fill="#946200" font-size="11" text-anchor="middle" font-weight="bold">EVENT-time (one real moment at the edge)</text>
+
+  <!-- text row -->
+  <text x="55" y="74" fill="#6a2cd0" font-size="11" text-anchor="end" font-weight="bold">user types</text>
+  <circle cx="300" cy="70" r="7" fill="#6a2cd0"/>
+  <line x1="307" y1="70" x2="330" y2="70" stroke="#6a2cd0" stroke-width="2" marker-end="url(#faT)"/>
+  <text x="345" y="74" fill="#5d5d72" font-size="10">"actually no—" · arrives ~instant</text>
+
+  <!-- speech row -->
+  <text x="55" y="134" fill="#0b7a55" font-size="11" text-anchor="end" font-weight="bold">user speaks</text>
+  <circle cx="300" cy="130" r="7" fill="#0b7a55"/>
+  <line x1="307" y1="130" x2="455" y2="130" stroke="#0b7a55" stroke-dasharray="3 3"/>
+  <circle cx="455" cy="130" r="5" fill="#0b7a55" opacity="0.5"/>
+  <line x1="455" y1="130" x2="478" y2="130" stroke="#0b7a55" stroke-width="2" marker-end="url(#faG)"/>
+  <text x="493" y="134" fill="#5d5d72" font-size="10">"send it to..." · +80ms STT → arrives late</text>
+
+  <!-- gesture row -->
+  <text x="55" y="194" fill="#b35900" font-size="11" text-anchor="end" font-weight="bold">user gestures</text>
+  <circle cx="300" cy="190" r="7" fill="#b35900"/>
+  <line x1="307" y1="190" x2="660" y2="190" stroke="#b35900" stroke-dasharray="3 3"/>
+  <circle cx="660" cy="190" r="5" fill="#b35900" opacity="0.5"/>
+  <line x1="660" y1="190" x2="683" y2="190" stroke="#b35900" stroke-width="2" marker-end="url(#faV)"/>
+  <text x="698" y="194" fill="#5d5d72" font-size="10">[points at X] · +200ms vision → arrives later</text>
+
+  <!-- processing-time axis -->
+  <line x1="60" y1="250" x2="1040" y2="250" stroke="#5d5d72" marker-end="url(#fa)"/>
+  <text x="1035" y="270" fill="#5d5d72" font-size="11" text-anchor="end">processing-time (arrival order) →</text>
+  <text x="345" y="270" fill="#6a2cd0" font-size="10" text-anchor="middle">text</text>
+  <text x="468" y="270" fill="#0b7a55" font-size="10" text-anchor="middle">speech</text>
+  <text x="672" y="270" fill="#b35900" font-size="10" text-anchor="middle">gesture</text>
+
+  <text x="560" y="300" fill="#3b3f8f" font-size="11" text-anchor="middle" font-weight="bold">order by EVENT-time, NOT by which pipeline finished first</text>
+</svg>
+<div class="legend"><b style="color:#6a2cd0">purple</b> text (instant) · <b style="color:#0b7a55">green</b> speech (+80ms) · <b style="color:#b35900">orange</b> gesture (+200ms) — the three fire at one real moment (amber line) but reach the sequencer spread across processing-time</div>
+<p>Order by <b>arrival</b> and the instant text "actually no—" lands <em>before</em> the
+slow-transcribed speech it was correcting → the LLM sees the conversation
+<b>backwards</b>. Order by <b>event-time</b> and it's correct.</p>
+
+<h3>The concrete timing model (the crux)</h3>
+<p>Processing latency is <b>per-modality and roughly constant</b>:</p>
+<ul>
+<li><b>audio integration ≈ 80 ms</b></li>
+<li><b>visual integration ≈ 200 ms</b></li>
+</ul>
+<p>So a sound and a sight that were <b>simultaneous at the edge</b> arrive at the
+sequencer <b>~120 ms apart</b>. This is a <em>known structural offset</em>, not random
+jitter — which makes it correctable by construction (same idea as A/V lip-sync
+in a video player).</p>
+<p><b>Two consequences that define the design:</b></p>
+<ol>
+<li><b>Latency calibration → recover event-time.</b> Stamp at capture, then subtract the channel's known latency:
+<div class="pre">event_time = arrival_time − stream_latency      <span class="c"># audio −80ms, visual −200ms</span></div>
+Now a co-temporal sound + gesture land on the same event-time axis and fuse correctly.</li>
+<li><b>Reorder window ≥ max inter-stream skew.</b> You must hold the timeline open at least ~120 ms (visual − audio, + jitter margin) before committing, or the slower visual event arrives <em>after</em> you flushed the audio it belonged with. → <b>The commit delay is set by your SLOWEST modality (visual, 200ms), not the fastest.</b> Your fusion window can never be tighter than your slowest channel.</li>
+</ol>
+<p>This is the latency-vs-correctness knob, made physical.</p>
+
+<!-- ==== -->
+<h2 id="arch">3 · Architecture</h2>
+<svg viewBox="0 0 1080 620" role="img" aria-label="Architecture: edge to specialists to sequencer to fusion to shared LLM and session store">
+  <defs>
+    <marker id="aa" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+    <marker id="aaB" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+    <marker id="aaS" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#0b7a55"/></marker>
+  </defs>
+
+  <!-- EDGE -->
+  <rect x="60" y="40" width="800" height="46" rx="6" fill="#eef4fc" stroke="#cdddf2"/>
+  <text x="80" y="68" fill="#1f5fa8" font-size="11" font-weight="bold">EDGE — stamp event-time at capture</text>
+  <text x="250" y="68" fill="#5d5d72" font-size="10">mic</text>
+  <text x="460" y="68" fill="#5d5d72" font-size="10">camera</text>
+  <text x="680" y="68" fill="#5d5d72" font-size="10">keyboard</text>
+
+  <line x1="250" y1="86" x2="250" y2="118" stroke="#5d5d72" marker-end="url(#aa)"/>
+  <line x1="470" y1="86" x2="470" y2="118" stroke="#5d5d72" marker-end="url(#aa)"/>
+  <line x1="685" y1="86" x2="685" y2="118" stroke="#5d5d72" marker-end="url(#aa)"/>
+
+  <!-- SPECIALISTS -->
+  <rect x="140" y="120" width="220" height="78" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="250" y="142" fill="#0b7a55" font-size="11" text-anchor="middle" font-weight="bold">STT + prosody</text>
+  <text x="250" y="160" fill="#5d5d72" font-size="9" text-anchor="middle">~80ms</text>
+  <text x="250" y="176" fill="#5d5d72" font-size="9" text-anchor="middle">words + affect</text>
+
+  <rect x="380" y="120" width="200" height="78" rx="6" fill="#fbf4e6" stroke="#b35900"/>
+  <text x="480" y="142" fill="#b35900" font-size="11" text-anchor="middle" font-weight="bold">vision model</text>
+  <text x="480" y="160" fill="#5d5d72" font-size="9" text-anchor="middle">~200ms</text>
+  <text x="480" y="176" fill="#5d5d72" font-size="9" text-anchor="middle">refs + affect</text>
+
+  <rect x="600" y="120" width="180" height="78" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="690" y="142" fill="#6a2cd0" font-size="11" text-anchor="middle" font-weight="bold">text (0 lag)</text>
+  <text x="690" y="168" fill="#5d5d72" font-size="9" text-anchor="middle">tokens</text>
+
+  <text x="880" y="150" fill="#5d5d72" font-size="10" font-weight="bold">SPECIALISTS</text>
+  <text x="880" y="166" fill="#5d5d72" font-size="9">each compresses</text>
+  <text x="880" y="180" fill="#5d5d72" font-size="9">its channel to</text>
+  <text x="880" y="194" fill="#5d5d72" font-size="9">structured tags</text>
+
+  <!-- annotations merge down -->
+  <line x1="250" y1="198" x2="250" y2="230" stroke="#5d5d72"/>
+  <line x1="480" y1="198" x2="480" y2="230" stroke="#5d5d72"/>
+  <line x1="690" y1="198" x2="690" y2="230" stroke="#5d5d72"/>
+  <line x1="250" y1="230" x2="690" y2="230" stroke="#5d5d72"/>
+  <text x="350" y="223" fill="#5d5d72" font-size="9">annotations</text>
+  <line x1="470" y1="230" x2="470" y2="260" stroke="#5d5d72" marker-end="url(#aa)"/>
+
+  <!-- SEQUENCER -->
+  <rect x="290" y="262" width="360" height="90" rx="6" fill="#fff7e6" stroke="#946200"/>
+  <text x="470" y="284" fill="#946200" font-size="12" text-anchor="middle" font-weight="bold">SEQUENCER (event-time join)</text>
+  <text x="470" y="304" fill="#5d5d72" font-size="9" text-anchor="middle">calibrate: arrival − latency · buffer in a reorder window</text>
+  <text x="470" y="320" fill="#5d5d72" font-size="9" text-anchor="middle">WATERMARK: commit prefix when "seen everything ≤ T"</text>
+  <text x="470" y="336" fill="#5d5d72" font-size="9" text-anchor="middle">bundle co-temporal annotations into ONE enriched token</text>
+  <line x1="470" y1="352" x2="470" y2="382" stroke="#5d5d72" marker-end="url(#aa)"/>
+
+  <!-- FUSION -->
+  <rect x="290" y="384" width="360" height="62" rx="6" fill="#eef7f3" stroke="#0d6e87"/>
+  <text x="470" y="408" fill="#0d6e87" font-size="12" text-anchor="middle" font-weight="bold">FUSION (annotations → context)</text>
+  <text x="470" y="428" fill="#5d5d72" font-size="9" text-anchor="middle">late fusion: merge the tags into LLM-readable context per event</text>
+  <line x1="470" y1="446" x2="470" y2="478" stroke="#5d5d72" marker-end="url(#aa)"/>
+
+  <!-- SHARED LLM + SESSION STORE -->
+  <rect x="290" y="480" width="360" height="90" rx="6" fill="#f1eafb" stroke="#6a2cd0" stroke-width="2"/>
+  <text x="470" y="504" fill="#6a2cd0" font-size="12" text-anchor="middle" font-weight="bold">SHARED LLM (batched)</text>
+  <text x="470" y="524" fill="#5d5d72" font-size="9" text-anchor="middle">KV-cache = session working memory</text>
+
+  <rect x="700" y="480" width="300" height="90" rx="6" fill="#e9f5f0" stroke="#0b7a55" stroke-width="2"/>
+  <text x="850" y="504" fill="#0b7a55" font-size="12" text-anchor="middle" font-weight="bold">SESSION STORE</text>
+  <text x="850" y="524" fill="#5d5d72" font-size="9" text-anchor="middle">id · identity · history · state</text>
+  <text x="850" y="540" fill="#5d5d72" font-size="9" text-anchor="middle">transport-agnostic, survives</text>
+  <text x="850" y="554" fill="#5d5d72" font-size="9" text-anchor="middle">modality switch</text>
+
+  <line x1="650" y1="515" x2="698" y2="515" stroke="#0b7a55" marker-start="url(#aaS)" marker-end="url(#aaB)"/>
+
+  <line x1="470" y1="570" x2="470" y2="598" stroke="#5d5d72" marker-end="url(#aa)"/>
+  <text x="470" y="613" fill="#5d5d72" font-size="10" text-anchor="middle" font-weight="bold">response → TTS / text</text>
+</svg>
+<div class="legend">edge → specialists (each compresses its channel to tags) → sequencer (event-time merge) → fusion → shared batched LLM, bound two-way to the transport-agnostic session store</div>
+
+<!-- ==== -->
+<h2 id="sequencer">4 · The Sequencer (the heart)</h2>
+<p>A k-way merge keyed on <b>event-time</b>, with a watermark commit. Structurally the
+same "don't finalize while work is in flight" as the web-crawler's <code>Queue.join()</code>
+— here the in-flight thing is <em>a stream that hasn't reported up to time T yet</em>.</p>
+<div class="pre">on event e from stream s:
+    e.event_time = e.arrival_time - LATENCY[s]      <span class="c"># calibrate</span>
+    buffer.push(e)                                   <span class="c"># min-heap on event_time</span>
+    watermark[s] = e.event_time                      <span class="c"># this stream is current to here</span>
+    W = min(watermark over all active streams)       <span class="c"># global safe time</span>
+    while buffer.peek().event_time &lt;= W:             <span class="c"># everything ≤ W has arrived</span>
+        emit(buffer.pop())                           <span class="c"># commit in event-time order</span></div>
+<ul>
+<li><b>Watermark <code>W = min over streams</code></b> — you can only safely commit up to the point your <em>slowest-reporting</em> stream has reached. One quiet stream holds the line (same straggler dynamic as the training all-reduce barrier).</li>
+<li><b>Idle-stream timeout.</b> If a stream goes silent (user stops gesturing), its watermark would freeze the timeline forever. Advance it with a heartbeat / max-wait so a silent modality can't stall the conversation. (Mirrors the batcher's size-OR-timer: commit on watermark OR deadline.)</li>
+<li><b>Co-temporal bundling.</b> Events within a small ε window at the same event-time are fused into one enriched token rather than emitted separately (the prosody spike <em>belongs to</em> that word).</li>
+</ul>
+
+<!-- ==== -->
+<h2 id="fusion">5 · Fusion: early vs late</h2>
+<svg viewBox="0 0 1080 280" role="img" aria-label="Early vs late fusion comparison">
+  <defs>
+    <marker id="fua" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+  </defs>
+
+  <!-- EARLY -->
+  <rect x="60" y="40" width="460" height="200" rx="8" fill="#fbf4e6" stroke="#ecdcb6"/>
+  <text x="290" y="68" fill="#b35900" font-size="13" text-anchor="middle" font-weight="bold">EARLY fusion</text>
+  <rect x="110" y="86" width="160" height="44" rx="6" fill="#fff7e6" stroke="#946200"/>
+  <text x="190" y="113" fill="#946200" font-size="10" text-anchor="middle">raw features</text>
+  <line x1="270" y1="108" x2="318" y2="108" stroke="#5d5d72" marker-end="url(#fua)"/>
+  <rect x="320" y="86" width="150" height="44" rx="6" fill="#fff7e6" stroke="#946200"/>
+  <text x="395" y="107" fill="#946200" font-size="10" text-anchor="middle">one big</text>
+  <text x="395" y="121" fill="#946200" font-size="10" text-anchor="middle">multimodal model</text>
+  <text x="290" y="166" fill="#5d5d72" font-size="10" text-anchor="middle">richest, $$$, tightly coupled,</text>
+  <text x="290" y="184" fill="#5d5d72" font-size="10" text-anchor="middle">one model must do everything</text>
+
+  <!-- LATE -->
+  <rect x="560" y="40" width="460" height="200" rx="8" fill="#e9f5f0" stroke="#0b7a55" stroke-width="2"/>
+  <text x="790" y="68" fill="#0b7a55" font-size="13" text-anchor="middle" font-weight="bold">LATE fusion ✅ (build this)</text>
+  <rect x="600" y="86" width="120" height="44" rx="6" fill="#eef7f3" stroke="#0d6e87"/>
+  <text x="660" y="107" fill="#0d6e87" font-size="10" text-anchor="middle">each stream →</text>
+  <text x="660" y="121" fill="#0d6e87" font-size="10" text-anchor="middle">its specialist</text>
+  <line x1="720" y1="108" x2="758" y2="108" stroke="#5d5d72" marker-end="url(#fua)"/>
+  <rect x="760" y="86" width="110" height="44" rx="6" fill="#eef7f3" stroke="#0d6e87"/>
+  <text x="815" y="113" fill="#0d6e87" font-size="10" text-anchor="middle">structured tags</text>
+  <line x1="870" y1="108" x2="908" y2="108" stroke="#5d5d72" marker-end="url(#fua)"/>
+  <rect x="910" y="86" width="90" height="44" rx="6" fill="#eef7f3" stroke="#0d6e87"/>
+  <text x="955" y="113" fill="#0d6e87" font-size="10" text-anchor="middle">fuse the tags</text>
+  <text x="790" y="166" fill="#5d5d72" font-size="10" text-anchor="middle">cheap, modular, swappable models,</text>
+  <text x="790" y="184" fill="#5d5d72" font-size="10" text-anchor="middle">degrades gracefully if one drops</text>
+</svg>
+<div class="legend">early (left, amber): raw features → one coupled model · late (right, green): per-channel specialists emit tags, then fuse — the practical choice</div>
+<p><b>Late fusion</b> is the practical choice. Each specialist emits typed annotations;
+the token becomes a multi-channel record:</p>
+<div class="pre">[t=4.10  words="this is fine"]
+[t=4.10  prosody={anger:0.8, certainty:low}]
+[t=4.10  visual={ref:"fee_line_item", affect:"frustrated"}]
+   → fused LLM context:
+     User said "this is fine" but tone=angry and pointing at the fee
+     → likely sarcastic; treat as a complaint about the fee.</div>
+<h3>The two hard parts late fusion exposes</h3>
+<ol>
+<li><b>Alignment across rates.</b> Prosody is continuous (per-frame), words are discrete (per-utterance), gestures are sparse (per-event). Binding "this anger spike → <em>that</em> word" is a <b>windowed join on event-time</b> within a tolerance — the sequencer joining <em>features to tokens</em>, not just ordering tokens.</li>
+<li><b>Compression: what survives.</b> You can't send raw audio/video to the LLM — it's tokens at the end. Each specialist compresses its channel to a few tags, and the design question is <em>which signal survives</em>. The emotion/referent is precisely what's in the media but not the transcript — lose it in compression and you've discarded the reason the channel exists. <b>Design the tag schema around the signal that's unique to each channel.</b></li>
+</ol>
+
+<!-- ==== -->
+<h2 id="escalation">6 · Escalation: tiers of one persistent session</h2>
+<p>The session store is the <b>source of truth</b> and is <b>transport-agnostic</b> — so
+moving text→voice→video is binding a new transport to existing state, not a
+rewrite. This is the load-bearing decision (make it in step 2 below).</p>
+<table>
+<tr><th>Tier</th><th>Transport</th><th>Latency budget</th><th>Cost</th><th>Concurrency/GPU</th></tr>
+<tr><td class="tool">Text</td><td>WS/HTTP</td><td>seconds</td><td>cheap</td><td>many</td></tr>
+<tr><td class="tool">Voice</td><td>WebRTC: VAD→STT→LLM→TTS</td><td>sub-second (mouth-to-mouth)</td><td>GPU slot</td><td>few</td></tr>
+<tr><td class="tool">Video</td><td>+ vision specialist</td><td>sub-second + 200ms vision</td><td>GPU slot ++</td><td>fewer</td></tr>
+</table>
+<ul>
+<li><b>Escalation triggers:</b> explicit ask · detected frustration (now <em>measurable</em> from the prosody/visual tags!) · task complexity · identity verification · human handoff.</li>
+<li><b>Handoff:</b> provision the tier's GPU slot, attach the existing session (history + intent + fused affect state) — the voice tier starts already knowing the user is frustrated about the fee. Downgrade path symmetric.</li>
+<li><b>Barge-in re-sequences, not just cancels.</b> When the human interrupts the bot, you (1) cancel TTS instantly (<code>10_audio_pipeline_interruptible</code> — single Event, single-chunk latency) AND (2) treat the interruption as a new high-priority event that may <b>reorder/discard buffered tokens</b> in the sequencer.</li>
+</ul>
+
+<!-- ==== -->
+<h2 id="buildorder">7 · Build order (the "layer a constraint" rhythm)</h2>
+<p>Each step runs before the next exists — present it this way; let the interviewer
+"add a requirement" and each requirement is the next step.</p>
+<ol>
+<li><b>Text messaging</b> — session store + stateless handlers + LLM. Baseline.</li>
+<li><b>Persistent, transport-agnostic session</b> — <code>{id, identity, history, state}</code>; workers stateless. ← <em>the decision that makes everything else cheap.</em></li>
+<li><b>Voice channel</b> — WebRTC + VAD→STT→LLM→TTS, reusing the same store + LLM.</li>
+<li><b>Sequencer</b> — event-time calibration + watermark commit; needed the moment two streams coexist.</li>
+<li><b>Fusion</b> — specialists emit tags; bundle co-temporal annotations; design the tag schema around channel-unique signal.</li>
+<li><b>Video channel</b> — add the 200ms vision specialist; the sequencer's window widens to its latency; nothing else changes (that's the payoff of step 4).</li>
+<li><b>Escalation controller</b> — triggers + handoff + downgrade.</li>
+<li><b>Real-time hardening</b> — turn-taking/endpointing, barge-in re-sequencing, AEC3.</li>
+<li><b>Scale &amp; economics</b> — scheduler (text tier vs GPU voice/video slots), batch the shared LLM, persist KV-cache across escalation (~7× headroom from KV-cache compression — see voice_agents_notes.md), cost per session per tier.</li>
+</ol>
+
+<!-- ==== -->
+<h2 id="connections">8 · Connections to the rest of the prep set</h2>
+<table>
+<tr><th>This design</th><th>Reuses pattern from</th></tr>
+<tr><td>Sequencer watermark commit</td><td><code>09_web_crawler</code> <code>Queue.join()</code> (don't finalize in-flight)</td></tr>
+<tr><td>Watermark = min over streams; idle straggler</td><td><code>15_training_pipeline</code> all-reduce barrier</td></tr>
+<tr><td>Commit on watermark OR deadline</td><td><code>14_inference_server</code> size-OR-timer trigger</td></tr>
+<tr><td>Barge-in cancel</td><td><code>10_audio_pipeline_interruptible</code> (single Event)</td></tr>
+<tr><td>Shared LLM, KV-cache = session memory</td><td><code>14_inference_server</code> (token = unit of work)</td></tr>
+<tr><td>Tiers = work units → capacity units</td><td>README <b>resource scheduler</b> thesis</td></tr>
+<tr><td>Event-time merge (heap)</td><td><code>algorithms_cheatsheet</code> heap / k-way merge</td></tr>
+</table>
+
+<!-- ==== -->
+<h2 id="ammo">9 · Things to say out loud (interview ammo)</h2>
+<ul>
+<li>"This is a <b>stream-join on event-time</b> — the modalities are sources; the hard part is the reorder window and the watermark that decides when the timeline is safe to commit."</li>
+<li>"Audio is ~80ms, visual ~200ms, so simultaneous edge events arrive ~120ms apart. I <b>calibrate</b> by subtracting per-stream latency and size the <b>reorder window to the slowest modality</b> — correctness is bounded by your slowest channel."</li>
+<li>"I use <b>late fusion</b> — specialists emit structured tags — so models are swappable and it degrades gracefully. The schema is designed around the signal unique to each channel: tone from audio, referents from video."</li>
+<li>"Escalation is a <b>tier upgrade of one persistent session</b>, not a new conversation — which is why I make the session store transport-agnostic on day one."</li>
+<li>"Barge-in doesn't just cancel TTS — it <b>re-sequences</b>, because the interruption is a new high-priority event in the timeline."</li>
+</ul>
+
+<!-- ==== -->
+<h2 id="open">Open questions for the next pass</h2>
+<ul>
+<li>Mouth-to-mouth latency target (banks usually want &lt;800ms) → budget breakdown across VAD/STT/LLM/TTS + network + the 200ms vision tax.</li>
+<li>Self-host vs API per hop (see voice_agents_notes.md cost tables).</li>
+<li>Tag schema: exact fields per modality; how much affect detail the LLM can actually use.</li>
+<li>Failure modes: one specialist down (degrade to remaining channels), watermark starvation, clock skew across edge devices.</li>
+</ul>
+
+</body>
+</html>
