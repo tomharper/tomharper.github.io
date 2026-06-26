@@ -53,6 +53,7 @@
   <a href="#diagram">1 · The full stack (one diagram)</a>
   <a href="#consumers">1.5 · Three consumers: CPU · NN engine · shaders</a>
   <a href="#onchip">1.7 · Apple on-chip memory (threadgroup, tile, registers)</a>
+  <a href="#stackheap">1.8 · Stack vs heap (CPU and GPU)</a>
   <a href="#virt">2 · Virtual vs physical; user vs kernel</a>
   <a href="#pinned">3 · Pageable vs pinned (page-locked)</a>
   <a href="#dma">4 · DMA &amp; the discrete copy path</a>
@@ -443,6 +444,41 @@ UMA gets the bytes <em>to</em> the chip without a copy; these tiers decide how f
 you actually consume them. <code>storageModeMemoryless</code> is the extreme case —
 a render target that lives <em>only</em> in tile memory and never gets a DRAM
 backing at all.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="stackheap">1.8 · Stack vs heap <span class="n">— and why only heap reaches the GPU</span></h2>
+<div class="punch">
+Everything above is about <b>heap</b> memory. The <b>stack</b> never enters the
+GPU story — and that's the rule to internalize: <b>only heap (or an mmap'd region)
+can be handed to a GPU; you can never pass a stack variable.</b> A stack frame
+vanishes on return and its address isn't something the driver can pin or map.
+"Send this to the GPU" always means a heap allocation (<code>malloc</code> /
+<code>MTLBuffer</code> / <code>cudaMalloc</code>), never a local.
+</div>
+<h3>CPU side</h3>
+<table>
+<tr><th></th><th>Stack</th><th>Heap</th></tr>
+<tr><td class="k">Lifetime</td><td>scoped — freed on function return</td><td>explicit / refcount / GC; outlives the call</td></tr>
+<tr><td class="k">Allocation</td><td>bump the stack pointer (~free)</td><td>allocator call (slower; fragments)</td></tr>
+<tr><td class="k">Paging</td><td>hot + wired in practice; not the cliff</td><td><b>where the §0.5 paging cliff lives</b> — large/long-lived allocations swap</td></tr>
+<tr><td class="k">GPU-shareable?</td><td><span class="warn">no</span> — vanishes, can't be pinned/mapped</td><td><b>yes</b> — the only thing you can give a GPU</td></tr>
+</table>
+<h3>GPU side — there's a stack/heap analog too</h3>
+<table>
+<tr><th>CPU concept</th><th>GPU analog</th><th>Note</th></tr>
+<tr><td class="k">Stack / locals</td><td><b>registers + threadgroup memory</b></td><td>fast, scoped to the kernel invocation, gone when it ends — the on-chip "stack"</td></tr>
+<tr><td class="k">Heap</td><td><b>device buffers / VRAM</b> (UMA: the shared pool)</td><td>persists across launches; explicitly allocated; where data you hand the GPU lives</td></tr>
+<tr><td class="k">Stack overflow's cousin</td><td><b>register spilling</b></td><td>a kernel using too many registers <em>spills</em> to slow device memory ("local memory" in CUDA) — you fall off the fast tier onto the slow one, tanking occupancy/throughput</td></tr>
+</table>
+<div class="box"><div class="t">The developer rule</div>
+<b>Small, short-lived, per-call → stack / registers</b> (free, automatic, fast,
+nothing to manage). <b>Shared across CPU/GPU, large, or persistent → heap / device
+buffer</b> (you own the lifetime, and it's where every UMA/pinning/paging concern in
+this doc applies). On UMA a <code>storageModeShared</code> buffer is <em>heap the GPU
+can also see</em> — there is no stack equivalent that crosses the CPU↔GPU boundary,
+which is why zero-copy handoff is always a heap-buffer story. And watch register
+pressure in kernels: spilling to device memory is the GPU's silent perf cliff, the
+analog of blowing the cache on the CPU.</div>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="virt">2 · Virtual vs physical; user vs kernel <span class="n">— the two axes</span></h2>
