@@ -147,17 +147,18 @@ which refcounted languages don't have because everything's refcounted.
 both non-nilling, but <span class="swift">unowned</span> <em>traps</em> on access-after-free (safe-ish);
 <span class="objc">unsafe_unretained</span> is a <span class="warn">dangling read</span> (UB, like a raw C++ pointer).</div>
 <div class="box y"><div class="t">scoped_ptr vs unique_ptr — the sole-owner lineage (C++)</div>
-Both are <b>sole owners that free on scope exit</b>; the difference is
-<em>transferability</em>:
+All are <b>sole owners that free on scope exit</b>; the difference is
+<em>transferability</em>, and there are three distinct pre/post-C++11 stories:
 <ul>
-<li><b><code>boost::scoped_ptr</code></b> (and the old <code>std::auto_ptr</code> it
-displaced) — <b>noncopyable AND non-movable</b>: ownership is pinned to that one
-scope, full stop. Pre-C++11, this was how you said "this owns, and ownership
-<em>cannot</em> travel."</li>
+<li><b><code>boost::scoped_ptr</code></b> — the genuinely non-transferable one:
+<b>noncopyable, non-movable</b> (but swappable). Ownership is pinned to one scope,
+full stop. Pre-C++11, this is how you said "owns, and ownership <em>cannot</em>
+travel."</li>
+<li><b><code>std::auto_ptr</code></b> (pre-C++11, <span class="warn">deprecated C++11, removed C++17</span>) — the opposite mistake: it was <b>copyable, but with <em>destructive transfer-on-copy</em></b> — copying it null'd the source. A broken pre-move that silently stole ownership, which is why it couldn't live in STL containers.</li>
 <li><b><code>std::unique_ptr</code></b> (C++11+) — noncopyable but <b>movable</b> via
-<code>std::move</code>: ownership can be <em>handed off</em> (returned from a
-factory, moved into a container). This is why it <em>replaced</em> scoped_ptr —
-same safety, plus transfer.</li>
+<code>std::move</code>: ownership is handed off <em>explicitly</em> (returned from a
+factory, moved into a container). It replaced <code>auto_ptr</code>'s implicit
+destructive copy with an explicit move — same intent, no footgun.</li>
 </ul>
 <b>Today: always reach for <code>unique_ptr</code></b> (default sole-owner) and
 <code>make_unique</code>; you'll only see <code>scoped_ptr</code>/<code>auto_ptr</code>
@@ -318,8 +319,9 @@ problem: lifetime becomes a tree, not a free-for-all.</div>
 futures + a <code>stop_token</code>, but <em>you</em> join and <em>you</em> propagate
 cancellation — no scope enforces it. (<code>std::jthread</code> auto-joins on
 destruction, the closest C++ gets to "scoped," but it's one thread, not a task
-tree.) Proposals like <code>std::execution</code> (senders/receivers) are heading
-toward structured concurrency but aren't the everyday model yet. <b>ObjC</b>: no
+tree.) <code>std::execution</code> (senders/receivers, P2300 — now in the C++26
+working draft) heads toward structured concurrency but isn't shipping in stdlibs
+yet. <b>ObjC</b>: no
 concept — every <code>dispatch_async</code> is unstructured by definition.</div>
 
 <!-- ════════════════════════════════════════ -->
@@ -351,17 +353,20 @@ guardrails — and most people never held both straight:</p>
 <p>Because the queue was hidden behind a tidy API, people wrote <b>async calling
 async calling async</b> without realizing each blocking link (a <code>dispatch_sync</code>,
 semaphore wait, blocking I/O) tied up a real pool thread. GCD adds threads to keep
-a blocked concurrent pool alive — up to <b>~64 per QoS pool</b> — so blocking-heavy
-work <b>saturates the pool and stalls</b> (or, on a deadlocked dependency, wedges
-permanently). Not "thousands of threads," but a thrashing, stuck pool — and either
-way the app hangs.</p>
+a blocked pool alive, up to a <b>global ceiling (historically ~512 worker
+threads)</b> — so blocking-heavy work <b>saturates the pool and stalls</b> (or, on a
+deadlocked dependency, wedges permanently). Not "thousands of threads," but a
+thrashing, stuck pool — and either way the app hangs. (A separate "64" figure that
+floats around is the number of <em>in-flight blocked work items</em> a queue
+tolerates, not a thread cap.)</p>
 <p>The deeper pain was <b>debuggability</b>: with work hopping across dozens of
 anonymous queues, a crash or hang gave you a stack that <b>started mid-block with
 no caller</b> — the chain that led there lived on some other thread that had
 already moved on. "Hundreds of threads with untraceable stacks" is the exact thing
 that made early heavy-GCD apps miserable to debug.</p>
 <p><b>async/await is the answer to precisely this:</b> a <b>cooperative thread
-pool capped at ~core count</b> — tasks <em>suspend</em> (free the thread) instead
+pool sized to ~core count</b> (a soft target — it can overcommit under priority
+inversion, not a hard cap) — tasks <em>suspend</em> (free the thread) instead
 of <em>block</em> (hold the thread), so nesting async no longer creates threads;
 and the <code>await</code> chain preserves a logical stack you can actually follow.
 It also <b>collapses both axes out of your head</b>: <code>await</code> doesn't
@@ -375,7 +380,7 @@ buried, not replaced: same machinery, each layer asks you to understand less.</p
 
 <h3>GCD's other standing problems (carried until actors/async-await buried them)</h3>
 <ul>
-<li><b>Thread explosion (the precise version)</b> — it's not "every queue." Blocking calls (<code>dispatch_sync</code>, semaphore/condition waits, blocking I/O) on the <b>global concurrent queues</b> tie up pool threads; GCD adds threads to keep the pool live, up to a cap of <b>~64 threads per QoS pool</b>. You don't get "thousands of threads" — you get a <em>saturated 64-thread pool where new work stalls</em> (and on a deadlocked dependency, never runs). The fix: never block a pool thread — <code>await</code> suspends instead. <span class="warn">Rule: don't <code>dispatch_sync</code> / wait on semaphores from a concurrent queue.</span></li>
+<li><b>Thread explosion (the precise version)</b> — it's not "every queue." Blocking calls (<code>dispatch_sync</code>, semaphore/condition waits, blocking I/O) on the <b>global concurrent queues</b> tie up pool threads; GCD keeps spawning worker threads to replace blocked ones, up to a <b>global ceiling (historically ~512 threads)</b>. You don't get "thousands of threads" — long before the ceiling you get a <em>saturated, thrashing pool where new work stalls</em> (and on a deadlocked dependency, never runs). The fix: never block a pool thread — <code>await</code> suspends instead. <span class="warn">Rule: don't <code>dispatch_sync</code> / wait on semaphores from a concurrent queue.</span> (The oft-cited "64" is the in-flight-blocked-work-item count, not a thread cap.)</li>
 <li><b>No cancellation</b> — a dispatched block runs to completion; <code>DispatchWorkItem.cancel()</code> only skips work that hasn't started, it can't interrupt a running block. You end up threading manual <code>isCancelled</code> flags. (Tasks are cooperatively cancellable end-to-end.)</li>
 <li><b>No ownership / lifetime</b> — fire-and-forget work isn't <em>joined</em> by anyone; nothing guarantees child work finishes (or is cancelled) before the parent moves on. Not a memory leak — a <em>lifetime</em> gap. (Structured concurrency makes children part of the parent's scope.)</li>
 <li><b>Priority handling is easy to get wrong</b> — GCD does some priority donation (a <code>sync</code> from a high-QoS context raises the target), but cross-QoS queue hops still cause inversions you have to reason about by hand. (async/await escalates priority automatically.)</li>
@@ -438,7 +443,7 @@ when comparing them.
 <tr><td class="k">Default safety</td><td><span class="warn">none</span> — UB on a race</td><td><span class="warn">none</span> — you discipline it</td><td><b>compiler-checked</b> isolation</td></tr>
 <tr><td class="k">Tool</td><td>mutex / atomic, by hand</td><td>serial queues, by hand</td><td><b>actor</b> + <b>Sendable</b></td></tr>
 <tr><td class="k">Cross-thread sharing</td><td>anything, anytime (danger)</td><td>anything, anytime (danger)</td><td>only <code>Sendable</code> types may cross</td></tr>
-<tr><td class="k">Detection</td><td>ThreadSanitizer (runtime)</td><td>TSan (runtime)</td><td><b>compile error</b> (+ TSan)</td></tr>
+<tr><td class="k">Detection</td><td>ThreadSanitizer (runtime)</td><td>TSan (runtime)</td><td><b>compile error</b> (statically-detectable; unsafe opt-outs → TSan)</td></tr>
 </table>
 <div class="box"><div class="t">Sendable — the Swift idea with no C++/ObjC analog</div>
 A type is <code>Sendable</code> if it's safe to pass across concurrency domains
@@ -447,7 +452,10 @@ A type is <code>Sendable</code> if it's safe to pass across concurrency domains
 boundary. So "can this be shared between threads?" becomes a <b>type-checked
 question</b>, not a code-review hope. In C++/ObjC that guarantee lives only in
 your head and your tests (and TSan, which only catches races that actually
-execute). <em>Swift 6 strict concurrency makes data races a compile error.</em></div>
+execute). <em>Swift 6 complete checking turns statically-detectable data races into
+compile errors — for code that doesn't reach for the unsafe opt-outs
+(<code>@unchecked Sendable</code>, <code>nonisolated(unsafe)</code>, raw pointers,
+C/ObjC interop), which stay runtime-checked (TSan).</em></div>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="memorder">8 · Atomics &amp; the memory model <span class="n">— the low level (mostly C++)</span></h2>
@@ -502,7 +510,7 @@ don't hand-pick orderings at all.</div>
 <li><b>Concurrency model:</b> locks (C++) → serial queues (GCD) → actors (Swift). Each layer hides the one below: a serial queue is mutual-exclusion-without-a-lock; an actor is a queue the compiler enforces.</li>
 <li><b>The Apple lineage:</b> pthread → GCD → Combine → async/await+actors. Buried, not replaced — each step moves the queue/sync decision out of your head and into the compiler. Reach for the layer that matches the work: streams→Combine/AsyncSequence, request/response+state→async-await, raw dispatch→GCD.</li>
 <li><b>Structured concurrency:</b> a child task can't outlive its scope — the parent awaits all children, cancellation flows down, errors flow up and cancel siblings. Default to <code>async let</code> (fixed fan-out) / task groups (dynamic); use unstructured <code>Task { }</code> only to bridge sync→async, and always store + cancel it.</li>
-<li><b>Race safety:</b> C++/ObjC race-prevention is runtime discipline; Swift moves it to compile time with actors + Sendable (Swift 6 makes a data race a build error). On C++, buy that back with RAII locks + TSan in CI.</li>
+<li><b>Race safety:</b> C++/ObjC race-prevention is runtime discipline; Swift moves it to compile time with actors + Sendable (Swift 6 turns statically-detectable races into build errors — unless you use unsafe opt-outs, which stay TSan-only). On C++, buy that back with RAII locks + TSan in CI.</li>
 <li><b>Low level:</b> C++ exposes acquire/release ordering; default to <code>seq_cst</code> until a profile demands otherwise. In Swift, use an actor and never hand-pick orderings.</li>
 </ul></div>
 <p class="sub">For anyone moving mobile→systems: the <em>hard

@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apple Memory Models — UMA, and is it better?</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200;
+    --user:#1f5fa8; --kernel:#6a2cd0; --hw:#0b7a55; --bus:#b35900;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.6; max-width:1320px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.6rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--accent); margin:2.6rem 0 1rem; font-size:1.25rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--ink); margin:1.4rem 0 0.5rem; font-size:1rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--ink); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--ink); font-size:0.83rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul { margin:0.4rem 0 0.6rem 1.4rem; font-size:0.88rem; } li { margin:0.3rem 0; }
+  .toc { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem 1.4rem; margin:1rem 0 2rem; column-count:2; column-gap:2rem; font-size:0.85rem; }
+  .toc a { color:var(--ink); text-decoration:none; display:block; padding:0.15rem 0; }
+  .toc a:hover { color:var(--accent); }
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.82rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  td.k { font-weight:700; white-space:nowrap; }
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--accent); padding:0.9rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; font-size:0.88rem; }
+  .box.y { border-color:var(--amber); } .box.y .t { color:var(--amber); }
+  .box .t { color:var(--accent); font-weight:700; margin-bottom:0.4rem; }
+  .warn { color:var(--orange); font-weight:700; }
+  svg { display:block; margin:1.2rem auto; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  svg text { font-family:-apple-system,'Segoe UI',sans-serif; }
+  .legend { font-size:0.78rem; color:var(--muted); text-align:center; margin:-0.4rem 0 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Apple Memory Models — UMA, and is it better?</h1>
+<div class="sub">Apple Silicon's Unified Memory Architecture: what a buffer crosses to reach the CPU, GPU, or Neural Engine; how UMA differs from the discrete (PCIe) model at every layer; the history (it's mostly 1960s ideas, integrated); a verdict on whether unified is actually better; and the paging cliff that bounds the answer.</div>
+
+<div class="toc">
+  <a href="#tldr">0 · Overview &amp; history</a>
+  <a href="#verdict">0.5 · Is UMA better? (verdict + the paging cliff)</a>
+  <a href="#diagram">1 · The full stack (one diagram)</a>
+  <a href="#consumers">1.5 · Three consumers: CPU · NN engine · shaders</a>
+  <a href="#onchip">1.7 · Apple on-chip memory (threadgroup, tile, registers)</a>
+  <a href="#virt">2 · Virtual vs physical; user vs kernel</a>
+  <a href="#pinned">3 · Pageable vs pinned (page-locked)</a>
+  <a href="#dma">4 · DMA &amp; the discrete copy path</a>
+  <a href="#unified-sw">5 · Software-unified (CUDA managed)</a>
+  <a href="#unified-hw">6 · Hardware-unified (Apple UMA)</a>
+  <a href="#coherence">7 · Cache coherence</a>
+  <a href="#security">7.5 · Memory security — ASLR + the Apple stack</a>
+  <a href="#dev">8 · How this matters for developers (by scenario)</a>
+  <a href="#compare">9 · Side-by-side &amp; gotchas</a>
+</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="tldr">0 · Overview &amp; history</h2>
+<div class="punch">
+A pointer in your code is a <b>virtual address in user space</b>; the hardware that
+consumes it (DMA engine, GPU MMU) works in <b>physical addresses</b>. Bridging that
+gap — pin the pages, set up translation, then either <b>copy</b> across a bus
+(discrete) or <b>share the same physical pages</b> (unified) — is the whole story.
+<b>Apple Silicon's UMA shares one physical pool</b>, so the copy disappears; a
+discrete GPU pays a PCIe copy into its own VRAM.
+</div>
+<ul>
+<li><b>Discrete (NVIDIA/PCIe):</b> separate CPU DRAM and GPU VRAM. Data is <em>copied</em> over PCIe via DMA; pinned + staging buffers make that copy correct and fast.</li>
+<li><b>Software-unified (CUDA managed):</b> one <em>virtual</em> pointer, physically still two pools — pages <em>migrate</em> on page faults. Convenience over PCIe, not its elimination.</li>
+<li><b>Hardware-unified (Apple UMA):</b> one <em>physical</em> LPDDR pool on-package; CPU, GPU, and Neural Engine map the <em>same</em> pages. No copy, lower latency/power — but they share one bandwidth budget and one capacity ceiling.</li>
+</ul>
+<div class="box"><div class="t">History — Apple integrated, it didn't invent</div>
+Almost none of UMA is new; the pieces are decades old and Apple's contribution is
+<em>putting them on one package and making the whole memory pool fast and shared</em>:
+<ul>
+<li><b>Virtual memory, the MMU, paging</b> — Atlas (1962), Multics. ~60 years old.</li>
+<li><b>DMA</b> — mainframe era, 1960s: offload bulk copies from the CPU.</li>
+<li><b>Cache coherence</b> — SMP research from the 1980s.</li>
+<li><b>Shared/unified memory for GPUs</b> — integrated GPUs (Intel HD, AMD APUs) shared system DRAM for years, but over a slow bus and a small carve-out; consoles (PS4/PS5, Xbox) shipped real unified GDDR before Apple. SGI's older workstations shared memory too.</li>
+</ul>
+What Apple did that's genuinely distinctive: <b>on-package LPDDR with high bandwidth
+(~68 GB/s on the M1 base, up to ~800 GB/s on Ultra-class parts), a single coherent address space the CPU/GPU/Neural-Engine all use
+at full speed, and no second VRAM pool at all</b> — so "unified" stops being a
+budget compromise (integrated graphics) and becomes the high-performance default.
+The idea is old; making it <em>not slow</em> is the achievement. (The datacenter is
+now copying it — AMD MI300A is the true single-physical-pool analog; NVIDIA
+Grace-Hopper keeps two pools (Grace LPDDR5X + Hopper HBM3) joined by cache-coherent
+NVLink-C2C, closer to the coherent two-pool model in §5/§7.)</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="verdict">0.5 · Is UMA better? <span class="n">— a verdict, and the cliff that bounds it</span></h2>
+<div class="punch">
+<b>For Apple's targets — phones, laptops, on-device inference — yes, decisively.
+As a universal model — no.</b> UMA isn't strictly "better"; it's a different point
+on the curve: it optimizes <em>bytes-not-moved</em> (latency, power, copy-free
+sharing), where discrete + HBM optimizes <em>bytes-per-second</em> (raw bandwidth,
+scalable capacity).
+</div>
+<table>
+<tr><th>UMA wins when…</th><th>Discrete + HBM wins when…</th></tr>
+<tr><td>latency-sensitive, power-constrained (battery devices)</td><td>peak bandwidth dominates (HBM ~3+ TB/s, GPU-dedicated)</td></tr>
+<tr><td>workload copies data CPU↔GPU↔NPU constantly</td><td>training-scale throughput, the largest models</td></tr>
+<tr><td>the model fits in RAM — "whole model addressable, no copy"</td><td>you need to scale capacity past one package (add VRAM, add GPUs)</td></tr>
+<tr><td>efficiency per watt matters (moving bytes over PCIe burns power)</td><td>CPU and GPU would otherwise contend for one bus</td></tr>
+</table>
+<p>The reason Macs punch above their weight on local LLMs: a 64/128/192&nbsp;GB Apple
+Silicon machine can keep a large model <em>fully resident and addressable</em>
+without a copy, where a same-priced discrete card is capped by its VRAM. UMA trades
+<em>peak</em> for <em>efficiency and capacity-at-the-low-end</em> — the right trade
+for its devices, the wrong one for a training cluster.</p>
+<div class="box y"><div class="t">The cliff that bounds the verdict: UMA can page to SSD</div>
+UMA is still <b>ordinary virtual memory</b> — those LPDDR pages are pageable. Under
+pressure, macOS/iOS <b>compresses</b> memory, then <b>swaps to SSD</b>. And because
+<em>everything</em> shares one pool, one greedy allocation squeezes everyone.
+<ul>
+<li>While the GPU is actively using a buffer, Metal <b>wires (pins)</b> its pages — they can't page out mid-command-buffer. Between uses, they're fair game.</li>
+<li><b>The danger case — working set &gt; physical RAM:</b> on discrete you <em>OOM</em> (fail fast, honest). On UMA it <em>"works"</em>… by paging to SSD, and throughput falls off a cliff: from ~68–800 GB/s on-package to single-digit-GB/s SSD with far worse latency. It looks like it runs — tens to hundreds of times slower.</li>
+<li><b>iOS adds a wired-memory cap:</b> pin too much and <b>jetsam kills your app</b> rather than swapping (phones have little/no swap). So over-allocating either thrashes (Mac) or gets you killed (iPhone).</li>
+</ul>
+<b>So the verdict has a hard edge:</b> UMA's "whole model is addressable" win holds
+<em>only while the hot set stays within physical RAM</em>. <em>Addressable ≠
+resident.</em> Exceed the pool and the copy-free advantage is buried under SSD
+paging — which is exactly why people buy the big-RAM Apple Silicon configs for local
+models: they're paying to keep the model wired and never touch swap.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="diagram">1 · The full stack <span class="n">— every layer a buffer crosses</span></h2>
+<svg viewBox="0 0 1300 1080" role="img" aria-label="CPU/GPU memory stack, discrete vs unified">
+  <defs>
+    <marker id="ar" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+    <marker id="arC" markerWidth="11" markerHeight="11" refX="7" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#b35900"/></marker>
+    <marker id="arG" markerWidth="11" markerHeight="11" refX="7" refY="3.2" orient="auto"><path d="M0,0 L8,3.2 L0,6.4 Z" fill="#0b7a55"/></marker>
+  </defs>
+
+  <!-- ── column headers ── -->
+  <text x="450" y="30" text-anchor="middle" font-size="15" font-weight="bold" fill="#1d1d2c">DISCRETE GPU — PCIe (e.g. NVIDIA)</text>
+  <text x="990" y="30" text-anchor="middle" font-size="15" font-weight="bold" fill="#1d1d2c">UNIFIED MEMORY — UMA (Apple Silicon)</text>
+  <line x1="720" y1="44" x2="720" y2="1060" stroke="#d6d8e4" stroke-width="2" stroke-dasharray="3 5"/>
+
+  <!-- ── left gutter: layer bands ── -->
+  <!-- USER SPACE band -->
+  <rect x="14" y="50" width="1272" height="150" fill="#1f5fa8" opacity="0.06"/>
+  <text x="24" y="72" font-size="12" font-weight="bold" fill="#1f5fa8">USER SPACE</text>
+  <text x="24" y="88" font-size="10" fill="#5d5d72">virtual addrs</text>
+  <text x="24" y="101" font-size="10" fill="#5d5d72">your process</text>
+  <!-- KERNEL band -->
+  <rect x="14" y="206" width="1272" height="196" fill="#6a2cd0" opacity="0.06"/>
+  <text x="24" y="228" font-size="12" font-weight="bold" fill="#6a2cd0">KERNEL /</text>
+  <text x="24" y="243" font-size="12" font-weight="bold" fill="#6a2cd0">SYSTEM</text>
+  <text x="24" y="259" font-size="10" fill="#5d5d72">driver, VM,</text>
+  <text x="24" y="272" font-size="10" fill="#5d5d72">page tables</text>
+  <!-- HARDWARE band -->
+  <rect x="14" y="408" width="1272" height="644" fill="#0b7a55" opacity="0.06"/>
+  <text x="24" y="430" font-size="12" font-weight="bold" fill="#0b7a55">HARDWARE</text>
+  <text x="24" y="446" font-size="10" fill="#5d5d72">physical</text>
+  <text x="24" y="459" font-size="10" fill="#5d5d72">DRAM, bus,</text>
+  <text x="24" y="472" font-size="10" fill="#5d5d72">GPU</text>
+
+  <!-- ════ DISCRETE COLUMN (x ~200-700) ════ -->
+  <!-- app buffer -->
+  <rect x="200" y="60" width="500" height="60" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="450" y="84" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1f5fa8">Application buffer — malloc / new</text>
+  <text x="450" y="103" text-anchor="middle" font-size="10.5" fill="#5d5d72">pageable, in process virtual address space</text>
+  <!-- API -->
+  <rect x="200" y="130" width="500" height="60" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="450" y="153" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1f5fa8">CUDA runtime — cudaHostAlloc / cudaMemcpy</text>
+  <text x="450" y="172" text-anchor="middle" font-size="10.5" fill="#5d5d72">allocate <tspan font-style="italic">pinned</tspan> host buffer · enqueue transfer</text>
+  <!-- kernel: pin + driver -->
+  <rect x="200" y="216" width="245" height="80" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="322" y="240" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">VM: page-lock (pin)</text>
+  <text x="322" y="258" text-anchor="middle" font-size="10" fill="#5d5d72">mark pages non-swappable;</text>
+  <text x="322" y="271" text-anchor="middle" font-size="10" fill="#5d5d72">fix them to physical frames</text>
+  <text x="322" y="287" text-anchor="middle" font-size="10" fill="#5d5d72">so DMA addrs stay valid</text>
+  <rect x="455" y="216" width="245" height="80" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="577" y="240" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">GPU driver</text>
+  <text x="577" y="258" text-anchor="middle" font-size="10" fill="#5d5d72">program DMA engine,</text>
+  <text x="577" y="271" text-anchor="middle" font-size="10" fill="#5d5d72">build GPU page tables,</text>
+  <text x="577" y="287" text-anchor="middle" font-size="10" fill="#5d5d72">submit command buffer</text>
+  <!-- translation -->
+  <rect x="200" y="312" width="245" height="76" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="322" y="336" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">CPU MMU + TLB</text>
+  <text x="322" y="354" text-anchor="middle" font-size="10" fill="#5d5d72">virtual → physical</text>
+  <text x="322" y="368" text-anchor="middle" font-size="10" fill="#5d5d72">for CPU accesses</text>
+  <rect x="455" y="312" width="245" height="76" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="577" y="336" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">IOMMU / GPU MMU</text>
+  <text x="577" y="354" text-anchor="middle" font-size="10" fill="#5d5d72">device virtual → physical;</text>
+  <text x="577" y="368" text-anchor="middle" font-size="10" fill="#5d5d72">protects/maps DMA</text>
+  <!-- physical: system DRAM -->
+  <rect x="200" y="430" width="500" height="74" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="450" y="454" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0b7a55">System DRAM (DDR5) — host RAM</text>
+  <text x="450" y="473" text-anchor="middle" font-size="10.5" fill="#5d5d72">pinned staging buffer lives here at a fixed physical address</text>
+  <text x="450" y="491" text-anchor="middle" font-size="10.5" fill="#5d5d72">~50–100 GB/s</text>
+  <!-- PCIe bus -->
+  <rect x="200" y="546" width="500" height="74" rx="6" fill="#fdf0e3" stroke="#b35900"/>
+  <text x="450" y="570" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#b35900">PCIe bus — DMA engine copies bytes</text>
+  <text x="450" y="589" text-anchor="middle" font-size="10.5" fill="#5d5d72">THE bottleneck: ~16–64 GB/s, far below either DRAM</text>
+  <text x="450" y="607" text-anchor="middle" font-size="10.5" fill="#5d5d72">async DMA overlaps with compute (needs pinned src)</text>
+  <!-- GPU VRAM -->
+  <rect x="200" y="662" width="500" height="74" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="450" y="686" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0b7a55">GPU VRAM (GDDR6 / HBM) — device memory</text>
+  <text x="450" y="705" text-anchor="middle" font-size="10.5" fill="#5d5d72">separate physical pool, GPU's own address space</text>
+  <text x="450" y="723" text-anchor="middle" font-size="10.5" fill="#5d5d72">~400 GB/s – 3+ TB/s (HBM)</text>
+  <!-- GPU compute -->
+  <rect x="200" y="760" width="500" height="64" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="450" y="784" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#0b7a55">GPU compute (SMs) — kernels read VRAM</text>
+  <text x="450" y="803" text-anchor="middle" font-size="10.5" fill="#5d5d72">VRAM in the fast path (zero-copy mapped host is the exception)</text>
+
+  <!-- discrete flow arrows (copy chain) -->
+  <line x1="450" y1="120" x2="450" y2="128" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="450" y1="190" x2="450" y2="214" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="322" y1="296" x2="322" y2="310" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="577" y1="296" x2="577" y2="310" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="450" y1="388" x2="450" y2="428" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="450" y1="504" x2="450" y2="544" stroke="#b35900" stroke-width="2.5" marker-end="url(#arC)"/>
+  <text x="468" y="532" font-size="10.5" font-weight="bold" fill="#b35900">DMA copy ↓</text>
+  <line x1="450" y1="620" x2="450" y2="660" stroke="#b35900" stroke-width="2.5" marker-end="url(#arC)"/>
+  <line x1="450" y1="736" x2="450" y2="758" stroke="#0b7a55" marker-end="url(#arG)"/>
+
+  <!-- ════ UNIFIED COLUMN (x ~740-1240) ════ -->
+  <rect x="740" y="60" width="500" height="60" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="990" y="84" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1f5fa8">Application buffer — malloc / new</text>
+  <text x="990" y="103" text-anchor="middle" font-size="10.5" fill="#5d5d72">same idea: pageable, in process virtual space</text>
+  <rect x="740" y="130" width="500" height="60" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="990" y="153" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1f5fa8">Metal — MTLBuffer (storageModeShared)</text>
+  <text x="990" y="172" text-anchor="middle" font-size="10.5" fill="#5d5d72">one buffer, addressable by CPU <tspan font-weight="bold">and</tspan> GPU — no copy API</text>
+  <!-- kernel -->
+  <rect x="740" y="216" width="245" height="80" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="862" y="240" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">VM: wire pages</text>
+  <text x="862" y="258" text-anchor="middle" font-size="10" fill="#5d5d72">pages still pinned for</text>
+  <text x="862" y="271" text-anchor="middle" font-size="10" fill="#5d5d72">the GPU, but they are</text>
+  <text x="862" y="287" text-anchor="middle" font-size="10" fill="#5d5d72">the SAME pages — no copy</text>
+  <rect x="995" y="216" width="245" height="80" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="1117" y="240" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">GPU driver</text>
+  <text x="1117" y="258" text-anchor="middle" font-size="10" fill="#5d5d72">map the pages into the</text>
+  <text x="1117" y="271" text-anchor="middle" font-size="10" fill="#5d5d72">GPU's tables, submit work</text>
+  <text x="1117" y="287" text-anchor="middle" font-size="10" fill="#5d5d72">(no cross-bus DMA copy)</text>
+  <!-- translation -->
+  <rect x="740" y="312" width="245" height="76" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="862" y="336" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">CPU MMU + TLB</text>
+  <text x="862" y="354" text-anchor="middle" font-size="10" fill="#5d5d72">CPU virtual → physical</text>
+  <rect x="995" y="312" width="245" height="76" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="1117" y="336" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a2cd0">GPU MMU + TLB</text>
+  <text x="1117" y="354" text-anchor="middle" font-size="10" fill="#5d5d72">GPU virtual → <tspan font-weight="bold">same</tspan> physical</text>
+  <text x="1117" y="368" text-anchor="middle" font-size="10" fill="#5d5d72">frames as the CPU</text>
+
+  <!-- single unified pool -->
+  <rect x="740" y="430" width="500" height="120" rx="8" fill="#e9f5f0" stroke="#0b7a55" stroke-width="2.5"/>
+  <text x="990" y="462" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#0b7a55">ONE PHYSICAL POOL — LPDDR on-package</text>
+  <text x="990" y="484" text-anchor="middle" font-size="10.5" fill="#5d5d72">CPU, GPU, and Neural Engine all address these same pages</text>
+  <text x="990" y="500" text-anchor="middle" font-size="10.5" fill="#5d5d72">no VRAM, no PCIe, no copy — ~68–800 GB/s shared on-die fabric</text>
+  <text x="990" y="520" text-anchor="middle" font-size="10.5" fill="#5d5d72">the buffer is written once, read in place by either processor</text>
+  <text x="990" y="538" text-anchor="middle" font-style="italic" font-size="10" fill="#b35900">tradeoff: CPU + GPU share one bandwidth budget</text>
+
+  <!-- CPU cores / GPU cores tapping the pool -->
+  <rect x="760" y="600" width="210" height="70" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="865" y="630" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f5fa8">CPU cores</text>
+  <text x="865" y="649" text-anchor="middle" font-size="10" fill="#5d5d72">read/write in place</text>
+  <rect x="1010" y="600" width="210" height="70" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="1115" y="630" text-anchor="middle" font-size="12" font-weight="bold" fill="#0b7a55">GPU compute</text>
+  <text x="1115" y="649" text-anchor="middle" font-size="10" fill="#5d5d72">read/write in place</text>
+
+  <!-- unified flow arrows (no copy) -->
+  <line x1="990" y1="120" x2="990" y2="128" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="990" y1="190" x2="990" y2="214" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="862" y1="296" x2="862" y2="310" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="1117" y1="296" x2="1117" y2="310" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="862" y1="388" x2="940" y2="428" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <line x1="1117" y1="388" x2="1040" y2="428" stroke="#5d5d72" marker-end="url(#ar)"/>
+  <!-- pool <-> cores both directions (no copy, shared access) -->
+  <line x1="865" y1="598" x2="900" y2="552" stroke="#0b7a55" stroke-width="2" marker-end="url(#arG)"/>
+  <line x1="900" y1="552" x2="865" y2="598" stroke="#0b7a55" stroke-width="2" marker-end="url(#arG)"/>
+  <line x1="1115" y1="598" x2="1080" y2="552" stroke="#0b7a55" stroke-width="2" marker-end="url(#arG)"/>
+  <line x1="1080" y1="552" x2="1115" y2="598" stroke="#0b7a55" stroke-width="2" marker-end="url(#arG)"/>
+  <text x="990" y="588" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#0b7a55">shared, in place — no copy</text>
+
+  <!-- callout: the saved hops -->
+  <rect x="760" y="700" width="460" height="120" rx="6" fill="#fff" stroke="#b35900" stroke-dasharray="4 3"/>
+  <text x="990" y="724" text-anchor="middle" font-size="12" font-weight="bold" fill="#b35900">What unified memory DELETES from the left column</text>
+  <text x="785" y="746" font-size="10.5" fill="#5d5d72">✗ the pinned <tspan font-weight="bold">staging</tspan> buffer (no separate host copy)</text>
+  <text x="785" y="764" font-size="10.5" fill="#5d5d72">✗ the <tspan font-weight="bold">PCIe DMA copy</tspan> (the bandwidth bottleneck)</text>
+  <text x="785" y="782" font-size="10.5" fill="#5d5d72">✗ the second <tspan font-weight="bold">VRAM</tspan> pool (no duplicate of the data)</text>
+  <text x="785" y="800" font-size="10.5" fill="#5d5d72">✓ keeps: page tables, pinning, two MMUs, coherence</text>
+</svg>
+<div class="legend">blue = user space · purple = kernel/system · green = hardware/physical · orange = the bus / the cost</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="consumers">1.5 · Three consumers, three paths <span class="n">— CPU · NN engine · GPU shaders</span></h2>
+<div class="punch">
+"Pass memory to the processor" isn't one flow — <b>what the consumer is changes
+the path</b>. The CPU reads through its own caches (no DMA at all). A
+<b>transformer / NN accelerator</b> streams weights from device memory into tiny
+on-chip SRAM and keeps the KV-cache resident. <b>GPU shaders</b> bind textures and
+vertex buffers through descriptors and sample through fixed-function units. Same
+DRAM, three different access shapes.
+</div>
+<svg viewBox="0 0 1300 760" role="img" aria-label="Three consumer flows">
+  <defs>
+    <marker id="c1" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#1f5fa8"/></marker>
+    <marker id="c2" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6a2cd0"/></marker>
+    <marker id="c3" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#0b7a55"/></marker>
+  </defs>
+
+  <!-- shared source -->
+  <rect x="400" y="50" width="500" height="62" rx="6" fill="#f2f3f8" stroke="#5d5d72"/>
+  <text x="650" y="76" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d1d2c">Physical DRAM — the buffer in memory</text>
+  <text x="650" y="96" text-anchor="middle" font-size="10.5" fill="#5d5d72">(discrete: VRAM after DMA · UMA: the one shared pool)</text>
+
+  <!-- three columns -->
+  <text x="230" y="150" text-anchor="middle" font-size="14" font-weight="bold" fill="#1f5fa8">① CPU</text>
+  <text x="650" y="150" text-anchor="middle" font-size="14" font-weight="bold" fill="#6a2cd0">② NN engine (transformer)</text>
+  <text x="1070" y="150" text-anchor="middle" font-size="14" font-weight="bold" fill="#0b7a55">③ GPU shaders (graphics)</text>
+
+  <!-- ── CPU column ── -->
+  <rect x="90" y="170" width="280" height="56" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="230" y="192" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">MMU + TLB</text>
+  <text x="230" y="210" text-anchor="middle" font-size="10" fill="#5d5d72">virtual → physical, per access</text>
+  <rect x="90" y="240" width="280" height="56" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="230" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">L1 / L2 / L3 caches</text>
+  <text x="230" y="280" text-anchor="middle" font-size="10" fill="#5d5d72">64-byte lines, prefetch, coherent</text>
+  <rect x="90" y="310" width="280" height="56" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="230" y="332" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">registers → ALU</text>
+  <text x="230" y="350" text-anchor="middle" font-size="10" fill="#5d5d72">scalar / SIMD (AVX, NEON)</text>
+  <rect x="90" y="392" width="280" height="74" rx="6" fill="#fff" stroke="#1f5fa8" stroke-dasharray="4 3"/>
+  <text x="230" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#1f5fa8">key traits</text>
+  <text x="230" y="432" text-anchor="middle" font-size="9.5" fill="#5d5d72">no DMA — direct loads</text>
+  <text x="230" y="447" text-anchor="middle" font-size="9.5" fill="#5d5d72">latency-optimized, big caches</text>
+  <text x="230" y="462" text-anchor="middle" font-size="9.5" fill="#5d5d72">cache misses are the enemy</text>
+
+  <!-- ── NN engine column ── -->
+  <rect x="510" y="170" width="280" height="56" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="650" y="192" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#6a2cd0">weights resident in device mem</text>
+  <text x="650" y="210" text-anchor="middle" font-size="10" fill="#5d5d72">loaded once, reused every token</text>
+  <rect x="510" y="240" width="280" height="56" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="650" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#6a2cd0">stream → on-chip SRAM</text>
+  <text x="650" y="280" text-anchor="middle" font-size="10" fill="#5d5d72">tiles staged near the MACs</text>
+  <rect x="510" y="310" width="280" height="56" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="650" y="332" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#6a2cd0">matmul / MAC array</text>
+  <text x="650" y="350" text-anchor="middle" font-size="10" fill="#5d5d72">thousands of MACs, fixed dataflow</text>
+  <rect x="510" y="380" width="280" height="40" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="650" y="405" text-anchor="middle" font-size="11" font-weight="bold" fill="#6a2cd0">KV-cache ↔ device mem (grows/token)</text>
+  <rect x="510" y="434" width="280" height="74" rx="6" fill="#fff" stroke="#6a2cd0" stroke-dasharray="4 3"/>
+  <text x="650" y="456" text-anchor="middle" font-size="11" font-weight="bold" fill="#6a2cd0">key traits</text>
+  <text x="650" y="474" text-anchor="middle" font-size="9.5" fill="#5d5d72">bandwidth-bound (weight streaming)</text>
+  <text x="650" y="489" text-anchor="middle" font-size="9.5" fill="#5d5d72">SRAM reuse is everything (FlashAttn)</text>
+  <text x="650" y="504" text-anchor="middle" font-size="9.5" fill="#5d5d72">KV-cache bytes bind capacity</text>
+
+  <!-- ── shader column ── -->
+  <rect x="930" y="170" width="280" height="56" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="1070" y="192" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0b7a55">descriptor / argument table</text>
+  <text x="1070" y="210" text-anchor="middle" font-size="10" fill="#5d5d72">binds buffers + textures to the draw</text>
+  <rect x="930" y="240" width="280" height="56" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="1070" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0b7a55">vertex / index buffers</text>
+  <text x="1070" y="280" text-anchor="middle" font-size="10" fill="#5d5d72">geometry fetched by input assembler</text>
+  <rect x="930" y="310" width="280" height="56" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="1070" y="332" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0b7a55">texture units (samplers)</text>
+  <text x="1070" y="350" text-anchor="middle" font-size="10" fill="#5d5d72">tiled/swizzled layout, filtered reads</text>
+  <rect x="930" y="380" width="280" height="40" rx="6" fill="#e9f5f0" stroke="#0b7a55"/>
+  <text x="1070" y="405" text-anchor="middle" font-size="11" font-weight="bold" fill="#0b7a55">shader cores → framebuffer</text>
+  <rect x="930" y="434" width="280" height="74" rx="6" fill="#fff" stroke="#0b7a55" stroke-dasharray="4 3"/>
+  <text x="1070" y="456" text-anchor="middle" font-size="11" font-weight="bold" fill="#0b7a55">key traits</text>
+  <text x="1070" y="474" text-anchor="middle" font-size="9.5" fill="#5d5d72">data BOUND via descriptors, not ptrs</text>
+  <text x="1070" y="489" text-anchor="middle" font-size="9.5" fill="#5d5d72">special tiled/swizzled texture layout</text>
+  <text x="1070" y="504" text-anchor="middle" font-size="9.5" fill="#5d5d72">fixed-function sampling hardware</text>
+
+  <!-- arrows from source to each -->
+  <line x1="520" y1="112" x2="260" y2="168" stroke="#1f5fa8" stroke-width="2" marker-end="url(#c1)"/>
+  <line x1="650" y1="112" x2="650" y2="168" stroke="#6a2cd0" stroke-width="2" marker-end="url(#c2)"/>
+  <line x1="780" y1="112" x2="1040" y2="168" stroke="#0b7a55" stroke-width="2" marker-end="url(#c3)"/>
+  <!-- intra-column arrows -->
+  <line x1="230" y1="226" x2="230" y2="238" stroke="#1f5fa8" marker-end="url(#c1)"/>
+  <line x1="230" y1="296" x2="230" y2="308" stroke="#1f5fa8" marker-end="url(#c1)"/>
+  <line x1="650" y1="226" x2="650" y2="238" stroke="#6a2cd0" marker-end="url(#c2)"/>
+  <line x1="650" y1="296" x2="650" y2="308" stroke="#6a2cd0" marker-end="url(#c2)"/>
+  <line x1="650" y1="366" x2="650" y2="378" stroke="#6a2cd0" marker-end="url(#c2)"/>
+  <line x1="1070" y1="226" x2="1070" y2="238" stroke="#0b7a55" marker-end="url(#c3)"/>
+  <line x1="1070" y1="296" x2="1070" y2="308" stroke="#0b7a55" marker-end="url(#c3)"/>
+  <line x1="1070" y1="366" x2="1070" y2="378" stroke="#0b7a55" marker-end="url(#c3)"/>
+
+  <!-- bottom summary band -->
+  <rect x="90" y="540" width="1120" height="180" rx="8" fill="#f2f3f8" stroke="#d6d8e4"/>
+  <text x="650" y="566" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d1d2c">The one-line difference per consumer</text>
+  <text x="110" y="596" font-size="11" fill="#1f5fa8" font-weight="bold">① CPU —</text>
+  <text x="180" y="596" font-size="11" fill="#5d5d72">reads memory <tspan font-weight="bold">directly through its cache hierarchy</tspan>; no DMA, no binding. Optimize for cache locality; misses stall the core.</text>
+  <text x="110" y="628" font-size="11" fill="#6a2cd0" font-weight="bold">② NN engine —</text>
+  <text x="210" y="628" font-size="11" fill="#5d5d72"><tspan font-weight="bold">streams weights from device DRAM into on-chip SRAM</tspan> and feeds a matmul array; KV-cache stays resident. Bandwidth + SRAM-reuse bound.</text>
+  <text x="110" y="660" font-size="11" fill="#0b7a55" font-weight="bold">③ Shaders —</text>
+  <text x="200" y="660" font-size="11" fill="#5d5d72">data is <tspan font-weight="bold">bound via descriptor tables</tspan> (not raw pointers); textures use a <tspan font-weight="bold">tiled/swizzled</tspan> layout read by fixed-function samplers.</text>
+  <text x="650" y="694" text-anchor="middle" font-size="10.5" font-style="italic" fill="#b35900">All three start from the same DRAM bytes — what differs is translation/binding and the on-chip path to the execution units.</text>
+</svg>
+<div class="legend">blue = CPU path · purple = NN/transformer accelerator · green = GPU graphics/shader path</div>
+
+<h3>Why the three diverge</h3>
+<table>
+<tr><th>Axis</th><th>CPU</th><th>NN engine (transformer)</th><th>GPU shaders</th></tr>
+<tr><td class="k">How memory is referenced</td><td>raw virtual pointer → MMU</td><td>device pointer; weights pre-staged</td><td><b>descriptor / argument buffer</b> binds resources</td></tr>
+<tr><td class="k">On-chip staging</td><td>L1/L2/L3 caches (general)</td><td><b>SRAM scratchpad</b> (software-managed tiles)</td><td>texture cache + threadgroup memory</td></tr>
+<tr><td class="k">Execution unit</td><td>scalar/SIMD ALU</td><td><b>MAC array</b>, fixed dataflow (systolic-style — the generic NN-accelerator/TPU pattern; Apple's exact ANE microarchitecture is undocumented)</td><td>shader cores + <b>fixed-function samplers</b></td></tr>
+<tr><td class="k">Memory layout</td><td>linear, cache-line aligned</td><td>tiled for matmul reuse</td><td><b>swizzled/tiled</b> textures, interleaved verts</td></tr>
+<tr><td class="k">Bound by</td><td>latency (cache misses)</td><td><b>bandwidth</b> (weight streaming) + SRAM size</td><td>fill rate / bandwidth / sampler throughput</td></tr>
+<tr><td class="k">The key trick</td><td>cache locality</td><td><b>keep tiles in SRAM</b> (FlashAttention)</td><td>minimize binds + exploit texture cache</td></tr>
+</table>
+<div class="box"><div class="t">The transformer-specific memory story (ties to the inference work)</div>
+A transformer accelerator's whole game is the <b>memory hierarchy</b>, not FLOPs:
+<b>weights</b> sit in device DRAM and are streamed in each forward pass (so decode
+is <em>bandwidth-bound</em> — see <code>20_kv_cache_decode</code>); the
+<b>KV-cache</b> grows one token at a time and lives in device memory (so KV bytes
+bind serving capacity — the <code>14_inference_server</code> thesis); and the
+performance win — <b>FlashAttention</b> — is purely a memory move: keep the
+attention tiles in <b>on-chip SRAM</b> instead of round-tripping the big matrices
+to DRAM. CPU caches are hardware-managed; the NN engine's SRAM is
+<em>software-managed</em>, which is why the kernel author controls the tiling.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="onchip">1.7 · Apple on-chip memory <span class="n">— the fast tiers above the shared pool</span></h2>
+<p>UMA is about the <em>big</em> pool. But the speed of a GPU/NPU kernel is decided
+<em>above</em> it — in small on-chip memories the shared LPDDR feeds. These are the
+Apple-relevant ones:</p>
+<table>
+<tr><th>Tier</th><th>What it is</th><th>Apple-specific note</th></tr>
+<tr><td class="k">Registers</td><td>per-thread, fastest</td><td>register pressure caps <b>occupancy</b> — too many regs/thread → fewer threads resident → less latency hiding</td></tr>
+<tr><td class="k">Threadgroup memory</td><td>programmer-managed scratchpad shared by a threadgroup (CUDA "shared memory")</td><td>Metal <code>threadgroup</code> address space; where you stage tiles for reuse. The matmul/attention win lives here.</td></tr>
+<tr><td class="k">Tile memory</td><td>on-chip framebuffer storage for a screen tile</td><td><b>Apple GPUs are TBDR</b> (tile-based deferred renderers) — the framebuffer for a tile stays on-chip; shaders read/write it without round-tripping DRAM. This is the distinctively-Apple tier. <code>imageblock</code> / programmable blending exploit it.</td></tr>
+<tr><td class="k">Texture cache + samplers</td><td>read-only cache feeding fixed-function sampling</td><td>swizzled/tiled texture layout (the shader path in §1.5)</td></tr>
+<tr><td class="k">SLC (system level cache)</td><td>large last-level cache shared across CPU/GPU/NPU on the SoC</td><td>a shared cache <em>in front of</em> the unified pool — part of why UMA stays fast; soaks cross-processor reuse</td></tr>
+<tr><td class="k">mmap'd file</td><td>a file mapped into virtual memory, paged in on access</td><td>how you load weights <b>zero-copy</b> (e.g. safetensors) — on UMA the mapped pages are directly GPU-addressable, no staging copy. The OS pages them from SSD on demand (and back out under pressure — §0.5 cliff).</td></tr>
+</table>
+<div class="box"><div class="t">The pattern: the pool is feedstock; on-chip reuse is the win</div>
+TBDR <b>tile memory</b> is the Apple-distinctive piece — keeping a tile's
+framebuffer on-chip is why mobile GPUs render efficiently (no repeated DRAM
+framebuffer traffic). For compute, the lever is the same as everywhere:
+<b>threadgroup memory</b> reuse (the GPU analog of the NN engine's SRAM tiling, §1.5).
+UMA gets the bytes <em>to</em> the chip without a copy; these tiers decide how fast
+you actually consume them. <code>storageModeMemoryless</code> is the extreme case —
+a render target that lives <em>only</em> in tile memory and never gets a DRAM
+backing at all.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="virt">2 · Virtual vs physical; user vs kernel <span class="n">— the two axes</span></h2>
+<p>Two independent distinctions get conflated; keep them separate.</p>
+<ul>
+<li><b>Virtual vs physical address.</b> Your pointer is a <em>virtual</em> address private to your process. The <b>MMU</b> (with the <b>TLB</b> as its cache) translates it to a <em>physical</em> DRAM address on every access, via <b>page tables</b>. A device's DMA engine has no notion of your virtual space — it needs the physical address (or its own device-virtual address through an <b>IOMMU</b>).</li>
+<li><b>User vs kernel (system) space.</b> Your code runs in <em>user</em> space and cannot touch hardware, set up DMA, or edit page tables. It asks the <em>kernel</em> (via syscalls/ioctls into the GPU driver) to do that. So "give this buffer to the GPU" is always a trip into kernel space to pin pages and program the device.</li>
+</ul>
+<div class="box"><div class="t">Why both matter for GPU handoff</div>The GPU needs a <em>stable physical</em> target, but your buffer is a <em>movable
+virtual</em> allocation the OS can swap or relocate at will. Closing that gap —
+locking the pages (physical stability) from kernel space (privilege) and mapping
+them for the device (translation) — is the irreducible work, and it's the same in
+both architectures. Unified memory removes the <em>copy</em>, not the
+<em>translation + pinning</em>.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="pinned">3 · Pageable vs pinned (page-locked) memory</h2>
+<p>Ordinary <code>malloc</code> memory is <b>pageable</b>: the OS may swap it to disk
+or move its physical frame. That's fatal for DMA — the device could read a frame
+that's been remapped out from under it.</p>
+<ul>
+<li><b>Pinned (page-locked)</b> memory (<code>cudaHostAlloc</code>, <code>mlock</code>) is locked to fixed physical frames so the DMA engine's addresses stay valid for the whole transfer.</li>
+<li><b>Pageable transfers pay a hidden double-copy:</b> the driver first copies your pageable buffer into an internal pinned <em>staging</em> buffer, then DMAs from there. Allocating pinned up front skips that copy.</li>
+<li><b>Async copy requires pinned</b> — overlapping transfer with compute (<code>cudaMemcpyAsync</code>) only works from page-locked source, because the engine must run unattended.</li>
+<li><b>Cost of pinning:</b> it removes pages from the swappable pool — over-pinning starves the rest of the system. Pin the working set, not everything.</li>
+</ul>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="dma">4 · DMA &amp; the discrete copy path</h2>
+<p><b>DMA</b> (Direct Memory Access) lets a dedicated engine move bytes between host
+DRAM and device VRAM without the CPU shuttling each word. The discrete path, end to
+end:</p>
+<ol style="margin-left:1.4rem;font-size:0.88rem;">
+<li>App fills a buffer (virtual, pageable).</li>
+<li>Runtime allocates/uses a <b>pinned</b> host buffer; kernel locks the pages.</li>
+<li>Driver programs the <b>DMA engine</b> with physical source + device dest, through the IOMMU.</li>
+<li><b>DMA copies over PCIe</b> into VRAM — the slow link (~16–64 GB/s vs hundreds of GB/s on either side).</li>
+<li>GPU kernels read <b>VRAM</b> in the normal/fast case (barring zero-copy mapped host memory, where a kernel can read host DRAM directly over PCIe).</li>
+<li>Results DMA back the same way.</li>
+</ol>
+<div class="box y"><div class="t">PCIe is the bottleneck — so amortize it</div>The link is an order of magnitude slower than either memory it connects. Practical
+consequences (and the reason the prep-set's "100GB to 8 GPUs" answer exists):
+<b>keep data resident on the GPU</b> (don't round-trip), <b>batch transfers</b>,
+<b>overlap copy with compute</b> using pinned buffers + streams, and prefer formats
+you can DMA without re-encoding (raw/contiguous, e.g. safetensors). On discrete,
+moving data is often costlier than computing on it.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="unified-sw">5 · Software-unified — CUDA Unified Memory <span class="n">— one pointer, two pools</span></h2>
+<p><code>cudaMallocManaged</code> gives a <b>single pointer valid on both CPU and
+GPU</b>. It feels unified, but on discrete hardware the memory is still physically
+split — the runtime <b>migrates pages on demand</b>: touch a managed page on the
+GPU that currently lives in host DRAM and you take a <b>page fault</b> that copies
+that page over PCIe, and vice-versa.</p>
+<ul>
+<li><b>Win:</b> programmer convenience — no explicit <code>cudaMemcpy</code>, oversubscription (use more than VRAM, paged in as needed).</li>
+<li><b>Catch:</b> the PCIe copy didn't vanish — it became <em>implicit</em> and fault-driven. Bad access patterns thrash pages across the bus. Hints (<code>cudaMemPrefetchAsync</code>, <code>cudaMemAdvise</code>) exist to control migration.</li>
+<li><b>Mental model:</b> software-unified = <em>virtual</em> unification (one address) over <em>physical</em> separation. Apple UMA = <em>physical</em> unification.</li>
+</ul>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="unified-hw">6 · Hardware-unified — Apple Silicon UMA</h2>
+<p>On Apple Silicon there is <b>one physical LPDDR pool on the package</b>, and the
+CPU, GPU, and Neural Engine all address it. There is no VRAM and no PCIe hop —
+a buffer is written once and read <b>in place</b> by whichever processor needs it.</p>
+<h3>Metal storage modes (how you express CPU/GPU visibility)</h3>
+<table>
+<tr><th>Mode</th><th>Who sees it</th><th>Use for</th></tr>
+<tr><td class="k">storageModeShared</td><td>CPU + GPU, same bytes</td><td>the default UMA win — zero-copy handoff (CPU fills, GPU reads)</td></tr>
+<tr><td class="k">storageModePrivate</td><td>GPU only</td><td>GPU-produced/consumed data (render targets, intermediates) — still in the one pool, but not CPU-mapped, so the GPU can lay it out optimally</td></tr>
+<tr><td class="k">storageModeManaged</td><td>CPU + GPU, with a synced copy</td><td>Intel/AMD Macs only — <b>unavailable on Apple Silicon</b>; a coherence shim where the pools <em>are</em> separate, so you <code>didModifyRange</code>/<code>synchronize</code></td></tr>
+</table>
+<div class="box"><div class="t">Unified ≠ "no rules"</div>You still pick a storage mode, still cross two MMUs, still pin pages for the GPU,
+and still synchronize <em>access ordering</em> (CPU must not read a buffer the GPU
+is still writing — that's a fence/completion-handler concern, not a copy). Unified
+memory removes the <b>copy</b> and the <b>duplicate pool</b>; it does not remove
+<b>translation, pinning, or ordering</b>.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="coherence">7 · Cache coherence <span class="n">— the subtle layer</span></h2>
+<p>CPU and GPU each have their own caches. When both touch the same physical pages
+(UMA) or a buffer moves between them (discrete), someone must ensure a reader sees
+the latest writes rather than stale cached lines.</p>
+<ul>
+<li><b>Discrete:</b> coherence is mostly sidestepped by the copy — the DMA delivers a fresh copy to VRAM; within the GPU, its own cache hierarchy applies. Crossing the bus is an explicit sync point.</li>
+<li><b>Apple UMA:</b> the on-die fabric keeps CPU/GPU access coherent at a hardware level for shared buffers, but you still enforce <b>ordering</b> — wait on the command buffer's completion before the CPU reads GPU output. Coherence (do I see fresh bytes?) is handled; ordering (have the writes happened yet?) is yours.</li>
+<li><b>This is the same split as the concurrency primer:</b> coherence ≈ visibility, ordering ≈ the acquire/release / fence discipline — just across processors instead of threads.</li>
+</ul>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="security">7.5 · Memory security <span class="n">— ASLR and the Apple mitigation stack</span></h2>
+<div class="punch">
+The same virtual-memory machinery that does translation (page tables, MMU) is also
+the <b>enforcement point for exploit mitigation</b>. The headline is <b>ASLR</b> —
+Apple <em>deliberately loads code, stack, heap, and libraries at randomized
+addresses</em> every run, so an attacker can't hardcode where to jump. Because Apple
+owns the whole silicon stack, it layers several mitigations on top that most
+platforms can't.
+</div>
+<h3>ASLR — randomize the layout so addresses can't be hardcoded</h3>
+<ul>
+<li><b>What:</b> the main binary, dynamic linker (dyld), and stack are randomized <b>per launch</b>; the heap gets base randomization <em>plus</em> per-allocation entropy from the allocator (not a single slide). The <b>dyld shared cache slide is per-<em>boot</em></b> — computed once and shared identically across every process until reboot (so one leaked shared-cache pointer in any process defeats that cache's ASLR everywhere until reboot).</li>
+<li><b>Why:</b> classic exploits jump to a <em>known</em> address (a function, a gadget, injected shellcode). Randomize the layout and that address is different every run — the attacker must first <b>leak a pointer</b> to learn the slide before they can aim. It converts "one bug → code execution" into "need an info-leak <em>and</em> a control bug."</li>
+<li><b>Apple specifics:</b> the <b>dyld shared cache</b> (all system libs, prelinked) is randomized as a unit; on iOS it's shared across processes but slid. <b>KASLR</b> randomizes the kernel itself.</li>
+</ul>
+<h3>The layers Apple stacks with it</h3>
+<table>
+<tr><th>Mitigation</th><th>What it does</th><th>Why it's hard to beat</th></tr>
+<tr><td class="k">ASLR / KASLR</td><td>randomize user + kernel address layout</td><td>need an info-leak to even know where to aim</td></tr>
+<tr><td class="k">PAC (Pointer Authentication)</td><td>Apple Silicon signs pointers with a truncated-QARMA crypto tag in the high bits (free because real VAs are ~48-bit, not 64; ARM's Top-Byte-Ignore also frees the top byte); tampering fails the check → crash</td><td><b>the distinctively-Apple one</b> (ARMv8.3, shipped first at scale on A12, 2018) — raises the bar against generic ROP/JOP <em>even after an ASLR leak</em>, since a forged pointer won't authenticate. <span class="warn">Not absolute</span> — signing gadgets, key leaks, and PACMAN-style speculative oracles are known bypasses.</td></tr>
+<tr><td class="k">W^X + code signing</td><td>a page is writable XOR executable; you can't write shellcode and run it</td><td>iOS enforces hard (no JIT without entitlement); hardware <b>APRR/SPRR</b> makes the W↔X flip cheap</td></tr>
+<tr><td class="k">KTRR / CTRR</td><td>hardware-locked read-only kernel text</td><td>kernel code can't be modified <em>even with a kernel write primitive</em></td></tr>
+</table>
+<div class="box"><div class="t">The connection to the rest of this doc</div>
+Memory protection and memory <em>performance</em> ride the same hardware: page
+tables + MMU do translation (§2) <b>and</b> isolation; PAC reuses the <em>unused high
+bits of a 64-bit pointer</em> — free because real address spaces use far fewer than
+64 bits (ARMv8 VAs are ~48-bit, and ARM's Top-Byte-Ignore frees the top byte).
+On UMA, where CPU/GPU/NPU share one physical pool, this isolation matters more, not
+less — the page tables are what keep one processor's (or process's) buffers
+invisible to another despite the shared silicon. Apple leans on all of it hard
+precisely because it controls CPU, GPU, OS, and toolchain end-to-end.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="dev">8 · How this matters for developers <span class="n">— by scenario</span></h2>
+<div class="punch">
+The theory above only pays off as decisions you make in code. Here's the
+"so what" for the situations you'll actually hit on Apple Silicon — and the one
+case where the discrete habits you learned are <em>wrong</em> here.
+</div>
+
+<h3>① On-device ML / LLM inference</h3>
+<ul>
+<li><b>Use <code>storageModeShared</code> and stop copying.</b> The discrete reflex — allocate host buffer, allocate device buffer, <code>memcpy</code> between them — is pure waste on UMA. Fill the buffer on the CPU, hand it to the GPU, read results back, all in place.</li>
+<li><b>Load weights with <code>mmap</code>, not <code>read</code>.</b> A memory-mapped safetensors/GGUF file is paged in on demand and is directly GPU-addressable — zero-copy load, and the OS evicts cold pages for free. (This is why local LLM runtimes mmap their weights.)</li>
+<li><b>Size RAM to keep the model resident.</b> The §0.5 cliff is the whole ballgame: a model that fits in the unified pool runs at full bandwidth; one that's slightly too big silently swaps to SSD and craters. Buy/target the RAM tier that keeps your hot set (weights + KV-cache) wired. <em>Addressable ≠ resident.</em></li>
+<li><b>Budget the KV-cache as memory, not an afterthought.</b> It grows per token and shares the one pool — it competes with the weights and the rest of the app. (Ties to <code>14_inference_server</code> / <code>20_kv_cache_decode</code>.)</li>
+<li><b>Expect bandwidth contention.</b> A memory-bound GPU kernel and a busy CPU fight for the same bus — don't assume UMA bandwidth is "free" per processor.</li>
+</ul>
+
+<h3>② Graphics / rendering (Metal)</h3>
+<ul>
+<li><b>Exploit TBDR tile memory.</b> Use <code>storageModeMemoryless</code> for transient render targets that are written and consumed <em>within a single render pass</em> (depth, MSAA color/resolve sources) — they live only in on-chip tile memory and never get DRAM backing, saving bandwidth and power. A classic deferred <b>G-buffer qualifies only when you fuse the passes into one</b> via programmable blending / imageblocks (tile shading); a G-buffer written in a geometry pass and read in a later pass forces DRAM backing and can't be memoryless. Porting a desktop renderer that allocates real textures for the genuinely-transient targets leaves the Apple GPU's main advantage on the table.</li>
+<li><b>Pick storage mode by who touches it:</b> <code>shared</code> for CPU-updated data (uniforms, dynamic vertices), <code>private</code> for GPU-only data (let the driver lay it out optimally), <code>memoryless</code> for tile-only transients.</li>
+<li><b>Minimize binds, batch draws</b> — data reaches shaders via descriptor/argument buffers, so argument-buffer reuse beats re-binding per draw.</li>
+</ul>
+
+<h3>③ General app / Swift &amp; ObjC</h3>
+<ul>
+<li><b>You mostly don't think about this — until memory pressure.</b> ARC + the allocator handle it; the layer that bites is paging. Honor memory-pressure notifications (<code>didReceiveMemoryWarning</code>, <code>DispatchSource</code> memory-pressure) and drop caches before the OS swaps or jetsam kills you.</li>
+<li><b>On iOS, respect the wired/footprint cap.</b> Large pinned allocations (big images, decoded video, model buffers) count against a hard footprint limit — exceed it and you're killed, not swapped. Downsample, stream, release.</li>
+<li><b>mmap big read-only assets</b> instead of loading them resident — they page in lazily and out under pressure.</li>
+</ul>
+
+<h3>④ Cross-process / system</h3>
+<ul>
+<li><b>Share with <code>mmap</code>/shared memory, don't serialize-and-copy</b> when two processes need the same big buffer (the CPU analog of UMA's zero-copy handoff).</li>
+<li><b>ASLR/PAC are free wins you shouldn't fight</b> — don't hardcode addresses, don't disable hardened runtime, keep pointer-auth on. They cost you nothing and raise the exploitation bar a lot (§7.5).</li>
+</ul>
+
+<div class="box y"><div class="t">The one habit to unlearn coming from discrete/CUDA</div>
+On a discrete GPU, <b>moving data is often costlier than computing on it</b>, so you
+architect around minimizing PCIe copies (keep data resident, batch transfers, double-buffer).
+On UMA <b>there is no copy to minimize</b> — the equivalent trap is the opposite:
+gratuitous explicit copies (allocating a separate "device" buffer and memcpy-ing into it)
+that throw away UMA's entire advantage. Port the <em>intent</em> (keep the hot set on-chip,
+reuse tiles/threadgroup memory) but drop the <em>copy choreography</em>. And replace
+"will it fit in VRAM?" (a hard OOM) with "will the hot set stay resident in the shared
+pool?" (a soft, silent SSD-paging cliff).</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="compare">9 · Side-by-side &amp; gotchas</h2>
+<table>
+<tr><th>Axis</th><th>Discrete (PCIe)</th><th>CUDA Unified (managed)</th><th>Apple UMA</th></tr>
+<tr><td class="k">Physical pools</td><td>2 (DRAM + VRAM)</td><td>2 (migrated)</td><td><b>1</b></td></tr>
+<tr><td class="k">Pointer</td><td>separate host/device</td><td><b>one</b> (virtual)</td><td><b>one</b> (shared buffer)</td></tr>
+<tr><td class="k">Copy to use on GPU</td><td>explicit DMA</td><td>implicit (page fault)</td><td><b>none</b></td></tr>
+<tr><td class="k">Bottleneck</td><td>PCIe bandwidth</td><td>fault/migration thrash</td><td>shared bandwidth budget</td></tr>
+<tr><td class="k">Pinning still needed</td><td>yes (for DMA)</td><td>runtime-managed</td><td>yes (page wiring)</td></tr>
+<tr><td class="k">Best for</td><td>huge models, max VRAM bandwidth</td><td>convenience / oversubscription</td><td>low-latency, low-power, copy-free</td></tr>
+</table>
+<div class="box y"><div class="t">Gotchas worth naming</div>
+<ul>
+<li><b>Forgetting to pin</b> → silent fallback to the staging double-copy; transfers look slow for no obvious reason.</li>
+<li><b>Synchronous copy on the critical path</b> → CPU stalls waiting for PCIe. Use async + pinned + streams to overlap.</li>
+<li><b>Treating CUDA managed memory as free unification</b> → page-fault thrash over PCIe; prefetch/advise to fix.</li>
+<li><b>On UMA, reading GPU output before the command buffer completes</b> → you read stale/partial bytes. Coherence is handled; <em>ordering</em> is not — wait on completion.</li>
+<li><b>Over-pinning</b> → starves the swappable pool; the whole system degrades.</li>
+<li><b>Assuming UMA bandwidth is "free"</b> → CPU and GPU contend for one bus; a memory-bound GPU kernel can starve the CPU and vice-versa.</li>
+</ul></div>
+
+</body>
+</html>
