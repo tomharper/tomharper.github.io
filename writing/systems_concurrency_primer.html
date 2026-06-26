@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apple Systems &amp; Concurrency Primer — C++ · Objective-C · Swift</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200;
+    --cpp:#1f5fa8; --objc:#b35900; --swift:#0b7a55;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.6; max-width:1200px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.6rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--accent); margin:2.6rem 0 1rem; font-size:1.25rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--ink); margin:1.4rem 0 0.5rem; font-size:1rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--ink); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--ink); font-size:0.83rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul { margin:0.4rem 0 0.6rem 1.4rem; font-size:0.88rem; } li { margin:0.3rem 0; }
+
+  .toc { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem 1.4rem; margin:1rem 0 2rem; column-count:2; column-gap:2rem; font-size:0.85rem; }
+  .toc a { color:var(--ink); text-decoration:none; display:block; padding:0.15rem 0; }
+  .toc a:hover { color:var(--accent); }
+
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.82rem; }
+  th { background:var(--accent); color:#fff; font-weight:700; text-align:left; padding:0.5rem 0.7rem; }
+  th.cpp { background:#16407a; color:#fff; } th.objc { background:#7a3c00; color:#fff; } th.swift { background:#08543a; color:#fff; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  td.k { font-weight:700; color:var(--ink); white-space:nowrap; }
+  .cpp { color:var(--cpp); } .objc { color:var(--objc); } .swift { color:var(--swift); }
+
+  .three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.8rem; margin:1rem 0; }
+  @media (max-width:900px){ .three { grid-template-columns:1fr; } }
+  .col { border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .col .h { padding:0.4rem 0.7rem; color:#fff; font-weight:700; font-size:0.82rem; }
+  .col.cpp .h { background:#16407a; } .col.objc .h { background:#7a3c00; } .col.swift .h { background:#08543a; }
+  pre { margin:0; padding:0.7rem; font-size:0.76rem; line-height:1.45; overflow-x:auto; font-family:'SF Mono',ui-monospace,monospace; background:#fff; color:var(--ink); }
+  pre .c { color:var(--muted); }       /* comment */
+  pre .kw { color:var(--purple); }      /* keyword */
+  pre .ty { color:var(--cpp); }         /* type */
+
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--accent); padding:0.9rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; font-size:0.88rem; }
+  .box.g { border-color:var(--accent); } .box.y { border-color:var(--amber); }
+  .box .t { color:var(--accent); font-weight:700; margin-bottom:0.4rem; }
+  .box.g .t { color:var(--accent); } .box.y .t { color:var(--amber); }
+  .warn { color:var(--orange); font-weight:700; }
+</style>
+</head>
+<body>
+
+<h1>Apple Systems &amp; Concurrency Primer</h1>
+<div class="sub">Memory, ownership, value/reference semantics, threads, async, and data-race prevention, side by side. For the mobile→systems jump: the ObjC/Swift you know, anchored against the C++ that's new.</div>
+<div class="punch" style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap">
+  <b>Color key:</b>
+  <span><span class="cpp">█</span> <span class="cpp">C++</span></span>
+  <span><span class="objc">█</span> <span class="objc">Objective-C</span></span>
+  <span><span class="swift">█</span> <span class="swift">Swift</span> (incl. Combine, async/await, actors)</span>
+</div>
+
+<div class="toc">
+  <a href="#tldr">0 · The one-paragraph mental model</a>
+  <a href="#mem">1 · Memory management</a>
+  <a href="#own">2 · Ownership &amp; smart pointers / references</a>
+  <a href="#val">3 · Value vs reference semantics</a>
+  <a href="#cycle">4 · Retain cycles &amp; how each breaks them</a>
+  <a href="#thread">5 · Threads &amp; the primitives</a>
+  <a href="#async">6 · Async: blocks / GCD / async-await / actors</a>
+  <a href="#evolution">6.5 · Apple evolution: pthread → GCD → Combine → actors</a>
+  <a href="#async">↳ Structured concurrency &amp; Tasks</a>
+  <a href="#race">7 · Data races &amp; how each prevents them</a>
+  <a href="#memorder">8 · Atomics &amp; the memory model</a>
+  <a href="#gotcha">9 · Gotchas worth naming</a>
+  <a href="#say">10 · Summary</a>
+</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="tldr">0 · The one-paragraph mental model</h2>
+<div class="punch">
+<b><span class="cpp">C++</span></b>: you own memory; <b>RAII</b> ties lifetime to scope; <em>deterministic</em> destruction; concurrency is manual and the memory model is exposed (you can get it wrong, fast). <br>
+<b><span class="objc">Objective-C</span></b>: <b>ARC</b> = compiler-inserted retain/release on reference-counted objects; concurrency via <b>GCD</b> + blocks; almost no compile-time race safety. <br>
+<b><span class="swift">Swift</span></b>: <b>ARC</b> too, but <b>value types (structs) by default</b> + <b>async/await + actors + Sendable</b> push race-safety into the <em>type system</em> — the compiler rejects many data races.
+</div>
+<p>The throughline: <em>where does lifetime/safety get decided?</em> C++ at scope
+exit (RAII, deterministic). ObjC at runtime (refcount, you avoid cycles by hand).
+Swift increasingly at <b>compile time</b> (ownership + actor isolation checked by
+the compiler). Moving C++→Swift you trade manual control for compiler-enforced
+guarantees; moving Swift→C++ you regain control and lose the guardrails.</p>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="mem">1 · Memory management <span class="n">— who frees, and when</span></h2>
+<table>
+<tr><th>Axis</th><th class="cpp">C++</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Model</td><td>Manual + <b>RAII</b> (scope-bound)</td><td><b>ARC</b> (ref counting)</td><td><b>ARC</b> (ref counting, classes only)</td></tr>
+<tr><td class="k">Frees when</td><td>scope exit / <code>delete</code> — <b>deterministic</b></td><td>refcount → 0 — deterministic</td><td>refcount → 0 — deterministic</td></tr>
+<tr><td class="k">GC?</td><td>no</td><td>no (ARC, not tracing GC)</td><td>no (ARC, not tracing GC)</td></tr>
+<tr><td class="k">Who inserts release</td><td>you / destructor</td><td>compiler (ARC)</td><td>compiler (ARC)</td></tr>
+<tr><td class="k">Value types</td><td>stack/inline by default</td><td>C primitives only; objects are heap</td><td><b>structs/enums = value, heap-free</b></td></tr>
+<tr><td class="k">Main leak risk</td><td>forgetting <code>delete</code> / raw <code>new</code></td><td>retain cycles</td><td>retain cycles (fewer — value types)</td></tr>
+</table>
+<div class="box g"><div class="t">The key contrast</div>All three are <b>deterministic</b> (no GC pauses) — that's why they're all
+viable for latency-sensitive systems. The difference is <em>who does the
+bookkeeping</em>: C++ you (via RAII so it's automatic-at-scope), ObjC/Swift the
+ARC compiler. None scan the heap; all free the instant the last reference dies.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="own">2 · Ownership &amp; smart pointers / references <span class="n">— the direct mapping</span></h2>
+<table>
+<tr><th>Intent</th><th class="cpp">C++</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Sole owner</td><td><code>std::unique_ptr&lt;T&gt;</code> (C++11+); <code>boost::scoped_ptr</code> / pre-11 ancestor</td><td>(n/a — refcount)</td><td>(n/a — refcount)</td></tr>
+<tr><td class="k">Shared owner</td><td><code>std::shared_ptr&lt;T&gt;</code> (was <code>boost::shared_ptr</code>)</td><td><code>strong</code> (default)</td><td><code>strong</code> (default)</td></tr>
+<tr><td class="k">Non-owning, nilable</td><td><code>std::weak_ptr&lt;T&gt;</code></td><td><code>weak</code> (auto-nils)</td><td><code>weak</code> (auto-nils, optional)</td></tr>
+<tr><td class="k">Non-owning, won't outlive</td><td>raw <code>T*</code> / ref <code>T&amp;</code></td><td><code>unsafe_unretained</code></td><td><code>unowned</code> (traps if dead)</td></tr>
+<tr><td class="k">Refcount cost</td><td><code>shared_ptr</code> = <b>atomic</b> inc/dec</td><td>atomic</td><td>atomic</td></tr>
+</table>
+<div class="three">
+  <div class="col cpp"><div class="h">C++</div><pre><span class="kw">auto</span> p = std::make_unique&lt;Node&gt;();  <span class="c">// sole owner</span>
+<span class="kw">auto</span> s = std::make_shared&lt;Node&gt;();  <span class="c">// shared, atomic rc</span>
+std::weak_ptr&lt;Node&gt; w = s;          <span class="c">// no rc bump</span>
+<span class="kw">if</span> (<span class="kw">auto</span> sp = w.lock()) { ... }      <span class="c">// promote to use</span></pre></div>
+  <div class="col objc"><div class="h">Objective-C</div><pre>@property (strong) Node *next;   <span class="c">// owns</span>
+@property (weak)   Node *prev;   <span class="c">// auto-nils</span>
+<span class="c">// __weak / __strong in blocks:</span>
+__weak <span class="kw">typeof</span>(self) ws = self;
+[obj run:^{ __strong <span class="kw">typeof</span>(ws) ss = ws; ... }];</pre></div>
+  <div class="col swift"><div class="h">Swift</div><pre><span class="kw">var</span> next: Node?            <span class="c">// strong (default)</span>
+<span class="kw">weak var</span> prev: Node?       <span class="c">// auto-nils, optional</span>
+<span class="kw">unowned let</span> parent: Node   <span class="c">// non-nil, traps if dead</span>
+obj.run { [<span class="kw">weak self</span>] <span class="kw">in</span>     <span class="c">// capture list</span>
+  <span class="kw">guard let self</span> <span class="kw">else</span> { <span class="kw">return</span> }; ... }</pre></div>
+</div>
+<div class="box"><div class="t">The mapping to keep in your head</div>
+<code>shared_ptr</code> ≈ <span class="objc">strong</span> ≈ <span class="swift">strong</span> ·
+<code>weak_ptr</code> ≈ <span class="objc">weak</span> ≈ <span class="swift">weak</span> ·
+raw pointer ≈ <span class="objc">unsafe_unretained</span> ≈ <span class="swift">unowned</span>.
+The one with no ObjC/Swift analog is <b>sole ownership</b> — modern C++'s default,
+which refcounted languages don't have because everything's refcounted.
+<span class="swift">unowned</span> vs <span class="objc">unsafe_unretained</span>:
+both non-nilling, but <span class="swift">unowned</span> <em>traps</em> on access-after-free (safe-ish);
+<span class="objc">unsafe_unretained</span> is a <span class="warn">dangling read</span> (UB, like a raw C++ pointer).</div>
+<div class="box y"><div class="t">scoped_ptr vs unique_ptr — the sole-owner lineage (C++)</div>
+Both are <b>sole owners that free on scope exit</b>; the difference is
+<em>transferability</em>:
+<ul>
+<li><b><code>boost::scoped_ptr</code></b> (and the old <code>std::auto_ptr</code> it
+displaced) — <b>noncopyable AND non-movable</b>: ownership is pinned to that one
+scope, full stop. Pre-C++11, this was how you said "this owns, and ownership
+<em>cannot</em> travel."</li>
+<li><b><code>std::unique_ptr</code></b> (C++11+) — noncopyable but <b>movable</b> via
+<code>std::move</code>: ownership can be <em>handed off</em> (returned from a
+factory, moved into a container). This is why it <em>replaced</em> scoped_ptr —
+same safety, plus transfer.</li>
+</ul>
+<b>Today: always reach for <code>unique_ptr</code></b> (default sole-owner) and
+<code>make_unique</code>; you'll only see <code>scoped_ptr</code>/<code>auto_ptr</code>
+in legacy or Boost-era code. If you want to <em>express</em> "must not move,"
+that's a code-review convention now, not a type.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="val">3 · Value vs reference semantics <span class="n">— the biggest Swift divergence</span></h2>
+<div class="punch">
+This is where Swift breaks from both. <b>Swift structs/enums are value types —
+copied on assignment</b> (copy-on-write under the hood, so it's cheap). A copied
+value can't be mutated by another thread → <b>value semantics is itself a
+concurrency-safety tool.</b> ObjC has no struct objects (only C structs); C++
+has value semantics but you opt into reference via pointers.</p>
+</div>
+<table>
+<tr><th>Axis</th><th class="cpp">C++</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Default for user types</td><td><b>value</b> (copy); ref via <code>*</code>/<code>&amp;</code></td><td>objects = <b>reference</b>; only C structs are value</td><td><b>struct=value</b>, <b>class=reference</b></td></tr>
+<tr><td class="k">Copy cost</td><td>deep copy unless you write move</td><td>n/a (pointer copy)</td><td><b>copy-on-write</b> — cheap until mutated</td></tr>
+<tr><td class="k">Move semantics</td><td><code>std::move</code>, rvalue refs</td><td>no</td><td>compiler COW; <code>consuming</code>/<code>borrowing</code> (newer)</td></tr>
+<tr><td class="k">Concurrency angle</td><td>copies are independent (good); aliasing via ptr (danger)</td><td>shared mutable objects everywhere</td><td><b>value copy = no shared mutable state</b></td></tr>
+</table>
+<div class="box g"><div class="t">Why it matters for systems</div>"Prefer value types" in Swift is the same instinct as "pass by value / make
+copies independent" in C++ — <b>no aliasing means no data race</b>. The mobile
+habit of throwing reference objects around (ObjC) is exactly what creates shared
+mutable state; Swift's value-default is a deliberate correction.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="cycle">4 · Retain cycles &amp; how each breaks them <span class="n">— the #1 refcount bug</span></h2>
+<p>Refcounting (ARC, <code>shared_ptr</code>) can't free a cycle: A→B→A keeps both
+counts ≥1 forever. <b>The fix is the same in all three: make one edge non-owning.</b></p>
+<div class="three">
+  <div class="col cpp"><div class="h">C++ — weak_ptr</div><pre><span class="kw">struct</span> Node {
+  std::shared_ptr&lt;Node&gt; next;
+  std::weak_ptr&lt;Node&gt;   prev; <span class="c">// break cycle</span>
+};</pre></div>
+  <div class="col objc"><div class="h">ObjC — weak / [weak self]</div><pre>@property (weak) id delegate; <span class="c">// classic</span>
+__weak <span class="kw">typeof</span>(self) ws = self;
+self.block = ^{ [ws doThing]; };</pre></div>
+  <div class="col swift"><div class="h">Swift — weak/unowned capture</div><pre><span class="kw">weak var</span> delegate: Delegate?
+task = Task { [<span class="kw">weak self</span>] <span class="kw">in</span>
+  <span class="kw">guard let self</span> <span class="kw">else</span> { <span class="kw">return</span> }
+}</pre></div>
+</div>
+<div class="box y"><div class="t">Team rule</div>Breaking a retain cycle is <em>one</em> rule across all three languages:
+<b>make the back-reference weak (or unowned/weak_ptr)</b>. Audit these sites in
+review: parent↔child, delegate properties, and <b>closures/blocks capturing
+self</b> (the most common offender in app code). Default to <code>[weak self]</code>
+in any closure that outlives the current scope and <code>guard let self</code> at
+the top.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="thread">5 · Threads &amp; the primitives <span class="n">— the building blocks</span></h2>
+<table>
+<tr><th>Primitive</th><th class="cpp">C++ (std)</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Raw thread</td><td><code>std::thread</code>, <code>jthread</code></td><td><code>NSThread</code> (rare)</td><td><code>Thread</code> (rare)</td></tr>
+<tr><td class="k">Mutex</td><td><code>std::mutex</code> + <code>lock_guard</code></td><td><code>NSLock</code>, <code>@synchronized</code>, <code>os_unfair_lock</code></td><td><code>NSLock</code>, <code>OSAllocatedUnfairLock</code></td></tr>
+<tr><td class="k">Preferred model</td><td>threads + locks, or a pool</td><td><b>GCD</b> (dispatch queues)</td><td><b>structured concurrency</b> (async/await)</td></tr>
+<tr><td class="k">Serial execution</td><td>single-thread + queue</td><td>serial <code>dispatch_queue</code></td><td><b>actor</b></td></tr>
+<tr><td class="k">Condition / signal</td><td><code>condition_variable</code></td><td><code>dispatch_semaphore</code>, NSCondition</td><td><code>continuation</code>, <code>AsyncStream</code></td></tr>
+<tr><td class="k">Thread pool</td><td>roll your own / lib</td><td>GCD global queues</td><td>cooperative pool (runtime-managed)</td></tr>
+</table>
+<div class="three">
+  <div class="col cpp"><div class="h">C++ — mutex + lock_guard (RAII!)</div><pre>std::mutex m;
+<span class="kw">void</span> inc() {
+  std::lock_guard lk(m); <span class="c">// RAII: unlocks on scope exit</span>
+  ++count;               <span class="c">// even on exception</span>
+}
+std::atomic&lt;<span class="kw">int</span>&gt; n{0}; n.fetch_add(1);</pre></div>
+  <div class="col objc"><div class="h">ObjC — GCD</div><pre>dispatch_queue_t q =
+  dispatch_queue_create(<span class="kw">"work"</span>, DISPATCH_QUEUE_SERIAL);
+dispatch_async(q, ^{ [self doWork]; });
+<span class="c">// serial queue = mutual exclusion w/o a lock</span></pre></div>
+  <div class="col swift"><div class="h">Swift — async/await + actor</div><pre><span class="kw">actor</span> Counter {
+  <span class="kw">private var</span> n = 0
+  <span class="kw">func</span> inc() { n += 1 }  <span class="c">// isolated, race-free</span>
+}
+<span class="kw">let</span> c = Counter()
+<span class="kw">await</span> c.inc()             <span class="c">// suspension point</span></pre></div>
+</div>
+<div class="box"><div class="t">The evolution to narrate</div>
+<b>C++</b>: locks are explicit; <code>lock_guard</code> is RAII applied to locking
+(unlock on scope exit, even on throw) — the same RAII idea as memory.
+<b>ObjC/GCD</b>: a <em>serial queue gives you mutual exclusion without a lock</em> —
+hand work to a queue, it runs one-at-a-time. Big mental shift from locks.
+<b>Swift actors</b>: the queue idea promoted into the type system — an
+<code>actor</code> serializes access to its own state, and the <em>compiler</em>
+forces you to <code>await</code> across the boundary. Locks → queues → actors is
+the throughline.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="async">6 · Async <span class="n">— callbacks → structured concurrency</span></h2>
+<table>
+<tr><th>Axis</th><th class="cpp">C++</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Closures</td><td>lambdas <code>[capture](){}</code></td><td>blocks <code>^{}</code></td><td>closures <code>{ }</code></td></tr>
+<tr><td class="k">Future</td><td><code>std::future</code>/<code>promise</code>, <code>std::async</code></td><td>callback blocks; no native future</td><td><code>async</code> funcs, <code>Task</code></td></tr>
+<tr><td class="k">await</td><td><b>coroutines</b> (C++20 <code>co_await</code>) — low-level</td><td>none — nested callbacks</td><td><b><code>async/await</code></b> first-class</td></tr>
+<tr><td class="k">Cancellation</td><td>manual (stop_token on <code>jthread</code>)</td><td>manual flags</td><td><b>cooperative</b> (<code>Task.cancel</code>, checked)</td></tr>
+<tr><td class="k">Structured</td><td>no (manual join)</td><td>no</td><td><b>yes</b> — <code>async let</code>, task groups, auto-await children</td></tr>
+</table>
+<div class="box g"><div class="t">The big jump — and why it took until 2021</div><b>Callback hell wasn't an ObjC-only thing — Swift had it worst, for seven
+years.</b> Swift shipped in 2014 with <em>no</em> language-level async at all;
+<code>async/await</code> didn't land until <b>Swift 5.5 (2021)</b>. So from 1.0
+through 5.4 the <em>only</em> option was ObjC's completion-handler model, and Swift
+amplified it (nested closures + <code>Result</code>/error params + trailing-closure
+pyramids). That gap is a big reason GCD-with-closures stayed entrenched so long —
+not preference, just the absence of an alternative. <b>Adoption tracked the
+language feature:</b> teams moved off callbacks <em>when 5.5 finally let them</em>,
+not before. 5.5 flattened async into straight-line code, and <b>structured
+concurrency</b> guarantees child tasks finish (or cancel) before the parent
+returns — no orphaned work. C++20 coroutines exist but are a low-level toolkit you
+build futures/generators <em>on top of</em>, not an app-level model. This is the
+same "barrier / don't-finalize-in-flight" discipline from the distributed
+problems, but built into the language.</div>
+
+<h3>Structured concurrency &amp; Tasks <span class="n">— the model that makes the lifetime guarantee</span></h3>
+<div class="punch">
+<b>The core promise: a child task cannot outlive the scope that spawned it.</b>
+The parent <em>cannot return</em> until every child has finished or been cancelled —
+the compiler enforces it. That single rule is what kills GCD's orphaned-work
+problem: lifetime becomes a tree, not a free-for-all.</div>
+<table>
+<tr><th>Construct</th><th>Kind</th><th>Use it for</th></tr>
+<tr><td class="k"><code>async let</code></td><td><b>structured</b></td><td>a fixed, known set of concurrent children (2–3 parallel fetches). Auto-awaited at scope end; auto-cancelled on throw.</td></tr>
+<tr><td class="k"><code>withTaskGroup</code></td><td><b>structured</b></td><td>a <em>dynamic</em> number of children (one per item in a list). Group won't return until all finish; cancel the group → cancels all.</td></tr>
+<tr><td class="k"><code>Task { }</code></td><td><span class="warn">unstructured</span></td><td>bridging sync→async (e.g. a button handler kicks off async work). <span class="warn">Escapes the scope — you own its lifetime + cancellation.</span></td></tr>
+<tr><td class="k"><code>Task.detached</code></td><td><span class="warn">unstructured</span></td><td>rare — fully independent work with no inherited context/priority/actor. Usually a smell.</td></tr>
+</table>
+<div class="three">
+  <div class="col swift"><div class="h">Swift — async let (fixed fan-out)</div><pre><span class="kw">func</span> load() <span class="kw">async throws</span> -> Page {
+  <span class="kw">async let</span> user   = fetchUser()      <span class="c">// both run</span>
+  <span class="kw">async let</span> feed   = fetchFeed()      <span class="c">// concurrently</span>
+  <span class="kw">return</span> Page(<span class="kw">try await</span> user,         <span class="c">// joined here</span>
+              <span class="kw">try await</span> feed)
+}  <span class="c">// if this throws, the other is auto-cancelled</span></pre></div>
+  <div class="col swift"><div class="h">Swift — task group (dynamic fan-out)</div><pre><span class="kw">try await withThrowingTaskGroup</span>(of: Img.<span class="kw">self</span>) { g <span class="kw">in</span>
+  <span class="kw">for</span> url <span class="kw">in</span> urls { g.addTask { <span class="kw">try await</span> fetch(url) } }
+  <span class="kw">var</span> out: [Img] = []
+  <span class="kw">for try await</span> img <span class="kw">in</span> g { out.append(img) }
+  <span class="kw">return</span> out                          <span class="c">// won't return till all done</span>
+}  <span class="c">// throw/cancel cancels every child</span></pre></div>
+  <div class="col swift"><div class="h">Swift — unstructured Task (you own it)</div><pre>@IBAction <span class="kw">func</span> tap() {
+  task = Task { [<span class="kw">weak self</span>] <span class="kw">in</span>      <span class="c">// escapes scope</span>
+    <span class="kw">guard let self</span> <span class="kw">else</span> { <span class="kw">return</span> }
+    <span class="kw">await</span> self.refresh()
+  }                                   <span class="c">// must cancel in deinit:</span>
+}                                     <span class="c">// task?.cancel()</span></pre></div>
+</div>
+<div class="box"><div class="t">What structure buys you (and the rules)</div>
+<ul>
+<li><b>Lifetime = a tree.</b> Children are scoped to the parent; the parent awaits them. No orphans, no "who joins this?"</li>
+<li><b>Cancellation propagates down.</b> Cancel a parent/group → all descendants get cancelled cooperatively. (Cooperative = they must <em>check</em> <code>Task.isCancelled</code> / hit a suspension point; cancellation is a request, not a kill.)</li>
+<li><b>Errors propagate up &amp; auto-cancel siblings.</b> One child throws → the group throws → remaining children are cancelled. (This is the all-reduce-barrier / fail-fast discipline, in the language.)</li>
+<li><b>Context inherits</b> — priority, task-locals, and actor isolation flow from parent to structured children. <code>Task.detached</code> breaks that (why it's a smell).</li>
+<li><b>Team rule:</b> default to <code>async let</code> / task groups. Reach for unstructured <code>Task { }</code> <em>only</em> to bridge from sync code, and when you do, <b>store it and cancel it</b> (in <code>deinit</code> / <code>onDisappear</code>) — an un-cancelled <code>Task</code> is the async-era's retain-cycle-equivalent leak.</li>
+</ul></div>
+<div class="box y"><div class="t">vs C++ / ObjC</div>Neither has this. <b>C++</b>: <code>std::async</code>/<code>jthread</code> give you
+futures + a <code>stop_token</code>, but <em>you</em> join and <em>you</em> propagate
+cancellation — no scope enforces it. (<code>std::jthread</code> auto-joins on
+destruction, the closest C++ gets to "scoped," but it's one thread, not a task
+tree.) Proposals like <code>std::execution</code> (senders/receivers) are heading
+toward structured concurrency but aren't the everyday model yet. <b>ObjC</b>: no
+concept — every <code>dispatch_async</code> is unstructured by definition.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="evolution">6.5 · The Apple concurrency evolution <span class="n">— pthread → GCD → Combine → async/await + actors</span></h2>
+<div class="punch">
+<b>Nothing here was "replaced" — each layer was buried under the next and still
+ships.</b> async/await runs <em>on top of</em> GCD; <code>@MainActor</code> hops to
+the main dispatch queue. The arc is Apple repeatedly <b>chasing a better
+abstraction</b> over the same dispatch machinery — because each abstraction, once
+it hid the queues, got <em>misused</em> in a new way. Understand the lineage so
+your team reaches for the right layer and knows what the layers beneath are doing.
+</div>
+<table>
+<tr><th>Era</th><th>Layer (still ships)</th><th>What it gave</th><th>Its OWN distinct problem</th></tr>
+<tr><td class="k">~2000s</td><td><b>pthreads / NSThread</b> + locks</td><td>raw concurrency at all (POSIX threads; <code>NSThread</code>, <code>NSLock</code>)</td><td><span class="warn">manage everything by hand</span> — thread lifetime, pools, locks; every app re-implements a thread pool</td></tr>
+<tr><td class="k">2009→</td><td><b>GCD</b> — <code>dispatch_async</code></td><td>OS-managed pool; hand work to <em>queues</em> not threads; serial queue = lock-free mutual exclusion</td><td>fire-and-forget → <span class="warn">callback pyramids</span>, no return value, no cancellation, no structure (orphaned work)</td></tr>
+<tr><td class="k">2009→</td><td><b>GCD</b> — <code>dispatch_sync</code></td><td>run-and-wait; simple "do this now, block until done"</td><td><span class="warn">self-deadlock</span> (sync onto your own queue) + it <em>blocks a whole thread</em> while waiting → feeds thread explosion</td></tr>
+<tr><td class="k">2019→</td><td><b>Combine</b> (reactive)</td><td>composable async <em>streams</em>; declarative pipelines; backpressure — and the closest thing to "structured async" <em>while the language still had no async/await</em></td><td>steep operator zoo; <span class="warn">hard to debug</span>; verbose for one-shot; Apple-only; partly a stopgap, overtaken two years later</td></tr>
+<tr><td class="k">2021→</td><td><b>async/await + actors</b> (Swift 5.5)</td><td>straight-line async; structured cancellation; cooperative pool; <b>compiler-checked races</b>. <em>The first real language-level async — Swift had none for its first 7 years</em></td><td>actor reentrancy; <code>Sendable</code> friction (Swift 6); migration cost (but this is finally what <em>let</em> teams leave callbacks)</td></tr>
+</table>
+
+<div class="box y"><div class="t">The real root cause: two axes most developers never modeled correctly</div>
+<p>GCD forced a decision on <b>two orthogonal axes for every call</b>, with zero
+guardrails — and most people never held both straight:</p>
+<ul>
+<li><b>Which queue?</b> main vs background. Get it wrong → UIKit off main (crash/glitch), or heavy work <em>on</em> main (frozen UI).</li>
+<li><b>sync or async?</b> block-and-wait vs fire-and-forget. Conflated with the queue choice → <code>dispatch_sync</code> to main <em>from</em> main (instant deadlock), or async when they meant sync (ordering bugs).</li>
+</ul>
+<p>Because the queue was hidden behind a tidy API, people wrote <b>async calling
+async calling async</b> without realizing each blocking link (a <code>dispatch_sync</code>,
+semaphore wait, blocking I/O) tied up a real pool thread. GCD adds threads to keep
+a blocked concurrent pool alive — up to <b>~64 per QoS pool</b> — so blocking-heavy
+work <b>saturates the pool and stalls</b> (or, on a deadlocked dependency, wedges
+permanently). Not "thousands of threads," but a thrashing, stuck pool — and either
+way the app hangs.</p>
+<p>The deeper pain was <b>debuggability</b>: with work hopping across dozens of
+anonymous queues, a crash or hang gave you a stack that <b>started mid-block with
+no caller</b> — the chain that led there lived on some other thread that had
+already moved on. "Hundreds of threads with untraceable stacks" is the exact thing
+that made early heavy-GCD apps miserable to debug.</p>
+<p><b>async/await is the answer to precisely this:</b> a <b>cooperative thread
+pool capped at ~core count</b> — tasks <em>suspend</em> (free the thread) instead
+of <em>block</em> (hold the thread), so nesting async no longer creates threads;
+and the <code>await</code> chain preserves a logical stack you can actually follow.
+It also <b>collapses both axes out of your head</b>: <code>await</code> doesn't
+block, so the sync/async footgun is gone; and <code>@MainActor</code> makes "runs
+on main" a <em>compiler-checked annotation</em> instead of a <code>DispatchQueue.main.async</code>
+you have to remember.</p>
+<p><b>The throughline:</b> each generation moves the queue/sync decision <em>out of
+the developer's head and into the compiler</em> — because most developers never
+had a correct mental model of main-vs-background or sync-vs-async. That's why it's
+buried, not replaced: same machinery, each layer asks you to understand less.</p></div>
+
+<h3>GCD's other standing problems (carried until actors/async-await buried them)</h3>
+<ul>
+<li><b>Thread explosion (the precise version)</b> — it's not "every queue." Blocking calls (<code>dispatch_sync</code>, semaphore/condition waits, blocking I/O) on the <b>global concurrent queues</b> tie up pool threads; GCD adds threads to keep the pool live, up to a cap of <b>~64 threads per QoS pool</b>. You don't get "thousands of threads" — you get a <em>saturated 64-thread pool where new work stalls</em> (and on a deadlocked dependency, never runs). The fix: never block a pool thread — <code>await</code> suspends instead. <span class="warn">Rule: don't <code>dispatch_sync</code> / wait on semaphores from a concurrent queue.</span></li>
+<li><b>No cancellation</b> — a dispatched block runs to completion; <code>DispatchWorkItem.cancel()</code> only skips work that hasn't started, it can't interrupt a running block. You end up threading manual <code>isCancelled</code> flags. (Tasks are cooperatively cancellable end-to-end.)</li>
+<li><b>No ownership / lifetime</b> — fire-and-forget work isn't <em>joined</em> by anyone; nothing guarantees child work finishes (or is cancelled) before the parent moves on. Not a memory leak — a <em>lifetime</em> gap. (Structured concurrency makes children part of the parent's scope.)</li>
+<li><b>Priority handling is easy to get wrong</b> — GCD does some priority donation (a <code>sync</code> from a high-QoS context raises the target), but cross-QoS queue hops still cause inversions you have to reason about by hand. (async/await escalates priority automatically.)</li>
+<li><b>No race enforcement</b> — serial queues are a <em>tool</em>, not <em>enforcement</em>; nothing stops sharing mutable state across queues, and the compiler won't warn you. (actors + <code>Sendable</code> enforce isolation at compile time.)</li>
+</ul>
+
+<div class="three">
+  <div class="col objc"><div class="h">Swift/ObjC — GCD: the pyramid + the deadlock</div><pre>fetchUser(id) { user <span class="kw">in</span>
+  loadProfile(user) { profile <span class="kw">in</span>
+    loadAvatar(profile) { img <span class="kw">in</span>      <span class="c">// 3 deep…</span>
+      DispatchQueue.main.async { update(img) }
+    }
+  }
+}
+<span class="c">// and the classic foot-gun:</span>
+queue.sync { queue.sync { } }   <span class="c">// ⛔ self-deadlock</span></pre></div>
+  <div class="col swift"><div class="h">Swift — Combine: streams, operator zoo</div><pre>cancellable = fetchUser(id)
+  .flatMap { loadProfile($0) }
+  .flatMap { loadAvatar($0) }
+  .receive(on: DispatchQueue.main)
+  .sink(receiveCompletion: { ... },   <span class="c">// error here</span>
+        receiveValue: { update($0) })
+<span class="c">// powerful for streams, heavy for one-shot</span></pre></div>
+  <div class="col swift"><div class="h">Swift — async/await: flat, cancellable</div><pre><span class="kw">func</span> load() <span class="kw">async throws</span> {
+  <span class="kw">let</span> user    = <span class="kw">try await</span> fetchUser(id)
+  <span class="kw">let</span> profile = <span class="kw">try await</span> loadProfile(user)
+  <span class="kw">let</span> img     = <span class="kw">try await</span> loadAvatar(profile)
+  <span class="kw">await</span> MainActor.run { update(img) }
+}  <span class="c">// errors via throws; cancellation cooperative</span></pre></div>
+</div>
+<div class="box g"><div class="t">When to reach for each (don't default to "always async/await")</div>
+Pick the layer by the shape of the work, not by recency:
+<ul>
+<li><b>async/await + actors</b> — the default for new code: <em>request/response</em> async work and anything touching shared mutable state.</li>
+<li><b>Combine / <code>AsyncSequence</code></b> — genuine <em>streams of events over time</em> with operators (debounce search input, combine UI state). SwiftUI's <code>@Published</code> is Combine, so you'll keep it on the UI layer regardless.</li>
+<li><b>GCD</b> — still the substrate; reach for it directly only for simple one-off background dispatch or an explicit <code>DispatchQueue.main.async</code> hop in code not yet on the concurrency model.</li>
+</ul>
+Heuristic for the team: <b>streams → Combine/AsyncSequence; one-shot + state → async/await; raw dispatch → GCD.</b> The decision is stream-vs-request, not new-vs-old.</div>
+<div class="box y"><div class="t">The throughline that ties it to C++</div>
+Apple's arc is <b>callbacks → streams → structured concurrency</b>, and the
+endpoint (structured concurrency + compiler-enforced isolation) is something
+<b>C++ doesn't have</b> — C++ stopped at the "primitives" stage (threads,
+<code>future</code>, C++20 coroutines as a toolkit). So Swift went <em>further</em>
+than C++ on safety, while C++ retains more control. The practical takeaway:
+<b>Swift moved race-safety into the compiler; C++ leaves it to you</b> — so on a
+C++ codebase, invest in the discipline (RAII locks, ThreadSanitizer in CI) that
+Swift gets for free.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="race">7 · Data races &amp; how each prevents them <span class="n">— the safety gradient</span></h2>
+<div class="punch">
+<b>The single most important difference.</b> Race-prevention moves from
+<em>runtime discipline</em> (C++/ObjC: you must not mess up) to <em>compile-time
+enforcement</em> (Swift: the compiler rejects many races). This is the headline
+when comparing them.
+</div>
+<table>
+<tr><th>Mechanism</th><th class="cpp">C++</th><th class="objc">Objective-C</th><th class="swift">Swift</th></tr>
+<tr><td class="k">Default safety</td><td><span class="warn">none</span> — UB on a race</td><td><span class="warn">none</span> — you discipline it</td><td><b>compiler-checked</b> isolation</td></tr>
+<tr><td class="k">Tool</td><td>mutex / atomic, by hand</td><td>serial queues, by hand</td><td><b>actor</b> + <b>Sendable</b></td></tr>
+<tr><td class="k">Cross-thread sharing</td><td>anything, anytime (danger)</td><td>anything, anytime (danger)</td><td>only <code>Sendable</code> types may cross</td></tr>
+<tr><td class="k">Detection</td><td>ThreadSanitizer (runtime)</td><td>TSan (runtime)</td><td><b>compile error</b> (+ TSan)</td></tr>
+</table>
+<div class="box"><div class="t">Sendable — the Swift idea with no C++/ObjC analog</div>
+A type is <code>Sendable</code> if it's safe to pass across concurrency domains
+(value types, immutables, or internally-synchronized classes). The compiler
+<em>refuses</em> to let a non-<code>Sendable</code> value cross an actor/Task
+boundary. So "can this be shared between threads?" becomes a <b>type-checked
+question</b>, not a code-review hope. In C++/ObjC that guarantee lives only in
+your head and your tests (and TSan, which only catches races that actually
+execute). <em>Swift 6 strict concurrency makes data races a compile error.</em></div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="memorder">8 · Atomics &amp; the memory model <span class="n">— the low level (mostly C++)</span></h2>
+<p>C++ exposes the hardware memory model directly; ObjC/Swift mostly hide it
+(you use atomics/locks/actors and don't pick orderings).</p>
+<div class="three">
+  <div class="col cpp"><div class="h">C++ — explicit ordering</div><pre>std::atomic&lt;<span class="kw">int</span>&gt; flag{0};
+flag.store(1, std::memory_order_release);
+<span class="kw">int</span> v = flag.load(std::memory_order_acquire);
+<span class="c">// relaxed | acquire | release | seq_cst</span></pre></div>
+  <div class="col objc"><div class="h">ObjC — atomic property</div><pre>@property (atomic) <span class="kw">int</span> count; <span class="c">// seq-cst-ish</span>
+<span class="c">// OSAtomic* (deprecated) / stdatomic.h</span>
+<span class="c">// you rarely pick an ordering</span></pre></div>
+  <div class="col swift"><div class="h">Swift — high level</div><pre><span class="c">// Atomics package (swift-atomics)</span>
+<span class="kw">let</span> a = ManagedAtomic&lt;<span class="ty">Int</span>&gt;(0)
+a.wrappingIncrement(ordering: .relaxed)
+<span class="c">// but usually: use an actor instead</span></pre></div>
+</div>
+<div class="box y"><div class="t">The one pairing to internalize</div>
+<b>acquire/release</b> is the pair that matters: a <code>release</code> store
+"publishes" everything written before it; an <code>acquire</code> load that sees
+that store "sees" all those writes. It's how you hand data between threads without
+a full lock. <code>seq_cst</code> (default) is simplest + slowest;
+<code>relaxed</code> is just-an-atomic-counter (no ordering guarantees — fine for
+stats, wrong for handoff). Guidance: <b>default to <code>seq_cst</code> until a
+profile says the atomic is hot</b>, then drop to acquire/release deliberately and
+document why. This is C++ territory — in Swift, reach for an <code>actor</code> and
+don't hand-pick orderings at all.</div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="gotcha">9 · Gotchas worth naming</h2>
+<table>
+<tr><th>Gotcha</th><th>Where</th><th>What / fix</th></tr>
+<tr><td class="k">Retain cycle in closure</td><td>all 3</td><td>closure captures <code>self</code> strongly → <code>[weak self]</code> / <code>__weak</code> / <code>weak_ptr</code></td></tr>
+<tr><td class="k">Dangling pointer</td><td class="cpp">C++ / <span class="objc">ObjC</span></td><td>raw ptr / <code>unsafe_unretained</code> outlives object → UB. Swift <code>unowned</code> traps instead.</td></tr>
+<tr><td class="k">Iterator invalidation</td><td class="cpp">C++</td><td>mutating a container while iterating → UB. (Swift value-copy sidesteps it.)</td></tr>
+<tr><td class="k">False sharing</td><td class="cpp">C++</td><td>two atomics on one cache line → cores fight. Pad to 64B (<code>alignas</code>).</td></tr>
+<tr><td class="k">Deadlock by lock order</td><td>all 3</td><td>A locks X then Y, B locks Y then X → always acquire in a global order</td></tr>
+<tr><td class="k">GCD deadlock</td><td class="objc">ObjC/Swift</td><td><code>dispatch_sync</code> onto the current serial queue → self-deadlock</td></tr>
+<tr><td class="k">Out-of-order completion</td><td class="objc">ObjC/Swift</td><td><b>concurrent</b> queues (and parallel <code>async</code> tasks) finish in <em>any</em> order, not submission order — two <code>dispatch_async</code>s to a concurrent queue can complete B-before-A. Don't assume FIFO results. Fix: use a <b>serial</b> queue (or actor) if order matters, or tag + reorder results. A serial queue preserves order; a concurrent one only preserves <em>start</em> order, not finish.</td></tr>
+<tr><td class="k">Main-thread UI</td><td class="objc">ObjC/Swift</td><td>UIKit not thread-safe → hop to main (<code>@MainActor</code> in Swift checks it)</td></tr>
+<tr><td class="k">Actor reentrancy</td><td class="swift">Swift</td><td>state can change across an <code>await</code> inside an actor — re-check invariants after suspension</td></tr>
+</table>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="say">10 · Summary</h2>
+<div class="box g"><div class="t">What to hold in your head</div>
+<ul>
+<li><b>Memory:</b> all three are deterministic refcount/RAII — no GC. In C++ cleanup is scope-bound via RAII; in ObjC/Swift the ARC compiler inserts retain/release.</li>
+<li><b>Ownership:</b> <code>shared_ptr</code>≈strong, <code>weak_ptr</code>≈weak, raw-ptr≈unowned. The C++-only one is <code>unique_ptr</code> — sole ownership, which refcounted languages don't need.</li>
+<li><b>Value types:</b> Swift's struct-by-default is a concurrency tool — value copies have no aliasing, so no shared mutable state, so no race. Same instinct as passing by value in C++. <b>Prefer value types for anything that crosses a concurrency boundary.</b></li>
+<li><b>Concurrency model:</b> locks (C++) → serial queues (GCD) → actors (Swift). Each layer hides the one below: a serial queue is mutual-exclusion-without-a-lock; an actor is a queue the compiler enforces.</li>
+<li><b>The Apple lineage:</b> pthread → GCD → Combine → async/await+actors. Buried, not replaced — each step moves the queue/sync decision out of your head and into the compiler. Reach for the layer that matches the work: streams→Combine/AsyncSequence, request/response+state→async-await, raw dispatch→GCD.</li>
+<li><b>Structured concurrency:</b> a child task can't outlive its scope — the parent awaits all children, cancellation flows down, errors flow up and cancel siblings. Default to <code>async let</code> (fixed fan-out) / task groups (dynamic); use unstructured <code>Task { }</code> only to bridge sync→async, and always store + cancel it.</li>
+<li><b>Race safety:</b> C++/ObjC race-prevention is runtime discipline; Swift moves it to compile time with actors + Sendable (Swift 6 makes a data race a build error). On C++, buy that back with RAII locks + TSan in CI.</li>
+<li><b>Low level:</b> C++ exposes acquire/release ordering; default to <code>seq_cst</code> until a profile demands otherwise. In Swift, use an actor and never hand-pick orderings.</li>
+</ul></div>
+<p class="sub">The throughline for anyone moving mobile→systems: the <em>hard
+concepts</em> (refcounting, retain cycles, queues) you already own from ObjC/Swift.
+C++ adds <b>sole ownership</b> (<code>unique_ptr</code>), <b>deterministic
+scope-bound cleanup</b> (RAII), and the <b>exposed memory model</b> (orderings) —
+more control, fewer guardrails. Swift adds <b>compile-time race safety</b>
+(actors/Sendable) that C++ leaves to your discipline. Choose the language's grain:
+lean on the compiler in Swift, lean on RAII + sanitizers in C++.</p>
+
+</body>
+</html>
