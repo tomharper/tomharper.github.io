@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redis Primer: Distributed Systems Patterns</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200; --red:#3b3f8f;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.62; max-width:1180px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.7rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--green); margin:2.8rem 0 1rem; font-size:1.3rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--blue); margin:1.5rem 0 0.5rem; font-size:1.05rem; }
+  h4 { color:var(--purple); margin:1rem 0 0.4rem; font-size:0.92rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--green); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--cyan); font-size:0.84rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul,ol { margin:0.5rem 0 0.7rem 1.5rem; font-size:0.9rem; } li { margin:0.32rem 0; }
+  a { color:var(--blue); }
+
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.84rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  .tool { color:var(--green); font-weight:700; white-space:nowrap; }
+  .alt { color:var(--blue); }
+  .num { color:var(--amber); white-space:nowrap; font-weight:700; }
+  .yes { color:var(--green); font-weight:700; }
+  .no { color:var(--red); font-weight:700; }
+  .big-o { font-family:'SF Mono',ui-monospace,monospace; color:var(--purple); }
+
+  .toc { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem 1.4rem; margin:1rem 0 2rem; column-count:2; column-gap:2rem; font-size:0.85rem; }
+  .toc a { color:var(--ink); text-decoration:none; display:block; padding:0.16rem 0; }
+  .toc a:hover { color:var(--accent); }
+  .toc .lead { color:var(--accent); font-weight:700; }
+
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
+  .box.g { border-color:var(--green); } .box.y { border-color:var(--amber); } .box.r { border-color:var(--red); }
+  .box .t { color:var(--blue); font-weight:700; margin-bottom:0.5rem; }
+  .box.g .t { color:var(--green); } .box.y .t { color:var(--amber); } .box.r .t { color:var(--red); }
+  .warn { color:var(--red); font-weight:700; }
+  .pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1rem; font-size:0.82rem; overflow-x:auto; color:var(--ink); font-family:'SF Mono',ui-monospace,monospace; line-height:1.5; }
+  .pre .c { color:var(--muted); }
+  .pre .cmd { color:var(--red); font-weight:600; }
+  .pre .key { color:var(--orange); }
+  .pre .val { color:var(--green); }
+  .pre .num { color:var(--purple); font-weight:400; }
+  svg { display:block; margin:1.2rem auto; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  svg text { font-family:-apple-system,'Segoe UI',sans-serif; }
+  .legend { font-size:0.78rem; color:var(--muted); text-align:center; margin:-0.5rem 0 1rem; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:0.9rem; margin:1.1rem 0; }
+  .pc { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:0.9rem 1rem; border-top:3px solid var(--blue); }
+  .pc.timer { border-top-color:var(--blue); } .pc.priority { border-top-color:var(--purple); }
+  .pc.rate { border-top-color:var(--orange); } .pc.leaderboard { border-top-color:var(--green); }
+  .pc.queue { border-top-color:var(--red); } .pc.cache { border-top-color:var(--cyan); }
+  .pc h4 { color:var(--ink); margin:0 0 0.3rem; font-size:0.95rem; }
+  .pc .sm { font-size:0.82rem; color:var(--muted); margin-bottom:0.5rem; }
+  .pc .op { font-family:'SF Mono',ui-monospace,monospace; font-size:0.78rem; color:var(--cyan); background:var(--card2); padding:0.4rem 0.6rem; border-radius:5px; }
+  .footer { text-align:center; padding:2.5rem 0 1rem; color:var(--muted); font-style:italic; font-size:0.88rem; }
+</style>
+</head>
+<body>
+
+<h1>Redis Distributed Systems Primer</h1>
+<div class="sub">ZSET patterns for timers, queues, rate limiters, and more. One data structure — a sorted set — solves most distributed coordination problems once you know what the <em>score</em> means.</div>
+
+<div class="toc">
+  <a href="#idea" class="lead">1 · The big idea</a>
+  <a href="#internals">2 · ZSET internals</a>
+  <a href="#commands">3 · Core commands</a>
+  <a href="#timer">4 · Pattern: timer / scheduler</a>
+  <a href="#pq">5 · Pattern: priority queue</a>
+  <a href="#rate">6 · Pattern: rate limiter</a>
+  <a href="#atomicity" class="lead">7 · Atomicity = your lock</a>
+  <a href="#durability">8 · Durability</a>
+  <a href="#scaling">9 · Scaling</a>
+  <a href="#cheat">10 · Interview cheat sheet</a>
+</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="idea">1 · The big idea</h2>
+<div class="punch">
+Redis ZSET (sorted set) solves 90% of distributed coordination problems with <b>one
+data structure</b>. The whole trick is understanding what the <em>score</em>
+represents — change the meaning of the score and the same primitive becomes a
+timer, a queue, a rate limiter, or a leaderboard.
+</div>
+<div class="grid">
+  <div class="pc timer"><h4>Timer / Scheduler</h4><div class="sm">score = fire_timestamp</div><div class="op">ZRANGEBYSCORE 0 NOW</div></div>
+  <div class="pc priority"><h4>Priority Queue</h4><div class="sm">score = priority (inverted)</div><div class="op">ZPOPMIN</div></div>
+  <div class="pc rate"><h4>Rate Limiter</h4><div class="sm">score = request_timestamp</div><div class="op">ZCOUNT key (now-window) now</div></div>
+  <div class="pc leaderboard"><h4>Leaderboard</h4><div class="sm">score = points</div><div class="op">ZREVRANGE 0 9</div></div>
+  <div class="pc queue"><h4>Delayed Queue</h4><div class="sm">score = visible_at</div><div class="op">ZRANGEBYSCORE 0 NOW</div></div>
+  <div class="pc cache"><h4>Sliding Window</h4><div class="sm">score = event_timestamp</div><div class="op">ZREMRANGEBYSCORE 0 (now-window)</div></div>
+</div>
+<div class="box"><div class="t">Interview insight</div>These "different" problems are the <b>same data structure with different semantics</b>. Recognizing this pattern shows you see underlying structure, not just memorized solutions.</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="internals">2 · ZSET internals <span class="n">— why a sorted set, not a heap</span></h2>
+<p>A ZSET is a <b>skip list + hash table</b>. The dual structure gives you the best of
+both worlds: the skip list keeps members ordered by score for ranges and ranks, the
+hash table gives O(1) score lookup by member.</p>
+<table>
+<tr><th>Operation</th><th>Heap</th><th>ZSET</th></tr>
+<tr><td>Get min/max</td><td class="big-o">O(1)</td><td class="big-o">O(1)</td></tr>
+<tr><td>Insert</td><td class="big-o">O(log n)</td><td class="big-o">O(log n)</td></tr>
+<tr><td>Extract min</td><td class="big-o">O(log n)</td><td class="big-o">O(log n)</td></tr>
+<tr><td>Range query (score 100–200)</td><td class="no">O(n)</td><td class="yes">O(log n + m)</td></tr>
+<tr><td>Get rank of X</td><td class="no">O(n)</td><td class="yes">O(log n)</td></tr>
+<tr><td>Get score of X</td><td class="no">O(n)</td><td class="yes">O(1)</td></tr>
+<tr><td>Update score</td><td class="no">O(n) find + O(log n)</td><td class="yes">O(log n)</td></tr>
+</table>
+
+<svg viewBox="0 0 720 240" role="img" aria-label="Skip list structure with three express levels over a base list">
+  <defs>
+    <marker id="sk" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+  </defs>
+  <text x="20" y="46" fill="#6a2cd0" font-size="11" font-weight="bold">Level 3</text>
+  <text x="20" y="106" fill="#6a2cd0" font-size="11" font-weight="bold">Level 2</text>
+  <text x="20" y="166" fill="#6a2cd0" font-size="11" font-weight="bold">Level 1</text>
+
+  <!-- node x positions for values 1,2,4,6,7,9 -->
+  <!-- Level 1 (all nodes) -->
+  <g font-size="12" font-weight="bold" text-anchor="middle">
+    <rect x="100" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="117" y="169" fill="#1f5fa8">1</text>
+    <rect x="200" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="217" y="169" fill="#1f5fa8">2</text>
+    <rect x="300" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="317" y="169" fill="#1f5fa8">4</text>
+    <rect x="400" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="417" y="169" fill="#1f5fa8">6</text>
+    <rect x="500" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="517" y="169" fill="#1f5fa8">7</text>
+    <rect x="600" y="148" width="34" height="32" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/><text x="617" y="169" fill="#1f5fa8">9</text>
+  </g>
+  <line x1="134" y1="164" x2="198" y2="164" stroke="#5d5d72" marker-end="url(#sk)"/>
+  <line x1="234" y1="164" x2="298" y2="164" stroke="#5d5d72" marker-end="url(#sk)"/>
+  <line x1="334" y1="164" x2="398" y2="164" stroke="#5d5d72" marker-end="url(#sk)"/>
+  <line x1="434" y1="164" x2="498" y2="164" stroke="#5d5d72" marker-end="url(#sk)"/>
+  <line x1="534" y1="164" x2="598" y2="164" stroke="#5d5d72" marker-end="url(#sk)"/>
+
+  <!-- Level 2 (1,4,9) -->
+  <g font-size="12" font-weight="bold" text-anchor="middle">
+    <rect x="100" y="88" width="34" height="32" rx="6" fill="#f1eafb" stroke="#6a2cd0"/><text x="117" y="109" fill="#6a2cd0">1</text>
+    <rect x="300" y="88" width="34" height="32" rx="6" fill="#f1eafb" stroke="#6a2cd0"/><text x="317" y="109" fill="#6a2cd0">4</text>
+    <rect x="600" y="88" width="34" height="32" rx="6" fill="#f1eafb" stroke="#6a2cd0"/><text x="617" y="109" fill="#6a2cd0">9</text>
+  </g>
+  <line x1="134" y1="104" x2="298" y2="104" stroke="#5d5d72" marker-end="url(#sk)"/>
+  <line x1="334" y1="104" x2="598" y2="104" stroke="#5d5d72" marker-end="url(#sk)"/>
+
+  <!-- Level 3 (1,9) -->
+  <g font-size="12" font-weight="bold" text-anchor="middle">
+    <rect x="100" y="28" width="34" height="32" rx="6" fill="#e9f5f0" stroke="#0b7a55"/><text x="117" y="49" fill="#0b7a55">1</text>
+    <rect x="600" y="28" width="34" height="32" rx="6" fill="#e9f5f0" stroke="#0b7a55"/><text x="617" y="49" fill="#0b7a55">9</text>
+  </g>
+  <line x1="134" y1="44" x2="598" y2="44" stroke="#5d5d72" marker-end="url(#sk)"/>
+
+  <text x="360" y="216" fill="#5d5d72" font-size="11" text-anchor="middle">express lanes skip ahead — search drops down a level when the next node overshoots</text>
+</svg>
+<div class="legend">O(log n) search like a balanced tree · range scans just walk the base list forward (cache friendly) · simpler than a red-black tree and concurrency-friendly</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="commands">3 · Core commands</h2>
+
+<h3>ZADD — add member with score</h3>
+<div class="pre"><span class="cmd">ZADD</span> <span class="key">timers</span> <span class="num">1708700000</span> <span class="val">"job:abc123"</span>
+       <span class="c">key      score        member</span>
+       <span class="c">         (fire_at)    (timer_id)</span></div>
+<p>Stores the member with its score. If the member already exists, the score is updated in place.</p>
+
+<h3>ZRANGEBYSCORE — get members in a score range</h3>
+<div class="pre"><span class="cmd">ZRANGEBYSCORE</span> <span class="key">timers</span> <span class="num">0</span> <span class="num">1708700000</span> <span class="val">LIMIT 0 100</span>
+              <span class="c">key      min  max          limit</span>
+
+<span class="c"># Returns all members with score between 0 and now</span>
+<span class="c"># Perfect for "give me all due timers"</span></div>
+
+<h3>ZREM — remove member (atomic)</h3>
+<div class="pre"><span class="cmd">ZREM</span> <span class="key">timers</span> <span class="val">"job:abc123"</span>
+       <span class="c">key      member  (NOT the score!)</span>
+
+<span class="c"># Returns: 1 if removed, 0 if it didn't exist</span>
+<span class="c"># This return value is your distributed lock!</span></div>
+<div class="box"><div class="t">Key insight</div>ZREM is atomic because Redis is single-threaded. Two workers calling ZREM on the same member — only <b>one</b> gets <code>1</code>. No distributed lock needed.</div>
+
+<h3>ZPOPMIN — atomic pop (get + remove)</h3>
+<div class="pre"><span class="cmd">ZPOPMIN</span> <span class="key">priority_queue</span> <span class="num">1</span>
+         <span class="c">key              count</span>
+
+<span class="c"># Returns AND removes the lowest-scored member</span>
+<span class="c"># Atomic — perfect for priority queue consumers</span></div>
+
+<h3>Other useful commands</h3>
+<table>
+<tr><th>Command</th><th>Purpose</th></tr>
+<tr><td><code>ZSCORE key member</code></td><td>Get score of member — O(1)</td></tr>
+<tr><td><code>ZRANK key member</code></td><td>Get rank (position) of member</td></tr>
+<tr><td><code>ZCOUNT key min max</code></td><td>Count members in score range</td></tr>
+<tr><td><code>ZREVRANGE key 0 9</code></td><td>Top 10 (highest scores first)</td></tr>
+<tr><td><code>ZREMRANGEBYSCORE key min max</code></td><td>Remove all in score range</td></tr>
+<tr><td><code>ZINCRBY key increment member</code></td><td>Atomically increment score</td></tr>
+</table>
+
+<!-- ---------------------------------------- -->
+<h2 id="timer">4 · Pattern: timer / scheduler <span class="n">— score = fire_at</span></h2>
+<div class="box"><div class="t">The problem</div>Schedule callbacks to fire at specific times. Millions of timers, distributed workers, at-least-once delivery.</div>
+<div class="pre"><span class="c"># Producer: schedule a timer</span>
+timer_id = f"retention:{evidence_id}"
+fire_at  = time.time() + (7 * 365 * 24 * 3600)   <span class="c"># 7 years</span>
+
+redis.<span class="cmd">ZADD</span>(<span class="key">"timers"</span>, {timer_id: fire_at})
+
+<span class="c"># Store payload separately</span>
+redis.<span class="cmd">HSET</span>(<span class="key">"timer_payloads"</span>, timer_id, json.dumps({
+    "action": "delete",
+    "evidence_id": evidence_id
+}))</div>
+<div class="pre"><span class="c"># Consumer: poll and process</span>
+while True:
+    now = time.time()
+
+    <span class="c"># Get due timers (peek, don't remove yet)</span>
+    due = redis.<span class="cmd">ZRANGEBYSCORE</span>(<span class="key">"timers"</span>, 0, now, limit=100)
+
+    for timer_id in due:
+        <span class="c"># Atomic claim — only one worker wins</span>
+        if redis.<span class="cmd">ZREM</span>(<span class="key">"timers"</span>, timer_id) == 1:
+            payload = redis.<span class="cmd">HGET</span>(<span class="key">"timer_payloads"</span>, timer_id)
+            execute(payload)
+            redis.<span class="cmd">HDEL</span>(<span class="key">"timer_payloads"</span>, timer_id)
+        <span class="c"># else: another worker claimed it</span>
+
+    sleep(0.1)</div>
+
+<h3>At-least-once delivery</h3>
+<p>What if a worker dies after ZREM but before <code>execute</code>? Move the claim to a
+<em>processing</em> set with a visibility timeout instead of deleting it outright.</p>
+<div class="pre"><span class="c"># Move to "processing" set instead of removing</span>
+redis.<span class="cmd">ZREM</span>(<span class="key">"timers"</span>, timer_id)
+redis.<span class="cmd">ZADD</span>(<span class="key">"processing"</span>, {timer_id: now + 30})   <span class="c"># 30s timeout</span>
+
+execute(payload)
+
+redis.<span class="cmd">ZREM</span>(<span class="key">"processing"</span>, timer_id)   <span class="c"># Only after success</span>
+
+<span class="c"># Separate reaper process:</span>
+<span class="c"># scans "processing", moves expired items back to "timers"</span></div>
+
+<!-- ---------------------------------------- -->
+<h2 id="pq">5 · Pattern: priority queue <span class="n">— score = priority (inverted)</span></h2>
+<div class="box"><div class="t">The problem</div>Multiple producers, multiple consumers. Higher-priority items processed first.</div>
+<div class="pre"><span class="c"># Producer: enqueue with priority</span>
+<span class="c"># Lower score = higher priority (ZPOPMIN gets lowest)</span>
+priorities = {"CRITICAL": 0, "HIGH": 100, "MEDIUM": 200, "LOW": 300}
+
+job_id = f"job:{uuid.uuid4()}"
+redis.<span class="cmd">ZADD</span>(<span class="key">"job_queue"</span>, {job_id: priorities["HIGH"]})</div>
+<div class="pre"><span class="c"># Consumer: atomic pop</span>
+while True:
+    result = redis.<span class="cmd">ZPOPMIN</span>(<span class="key">"job_queue"</span>, 1)
+
+    if result:
+        job_id, priority = result[0]
+        process(job_id)
+    else:
+        sleep(0.1)   <span class="c"># Queue empty</span></div>
+<h3>Preventing starvation</h3>
+<p>Use <code>score = priority * 1_000_000 + timestamp</code>. Within the same priority band, items stay FIFO by arrival time.</p>
+<div class="pre">score = priorities["LOW"] * 1_000_000 + time.time()
+<span class="c"># LOW jobs still ordered by arrival time</span></div>
+
+<!-- ---------------------------------------- -->
+<h2 id="rate">6 · Pattern: rate limiter <span class="n">— sliding window</span></h2>
+<div class="pre">def is_allowed(user_id, limit=100, window=60):
+    key = f"ratelimit:{user_id}"
+    now = time.time()
+    window_start = now - window
+
+    <span class="c"># Remove old entries</span>
+    redis.<span class="cmd">ZREMRANGEBYSCORE</span>(key, 0, window_start)
+
+    <span class="c"># Count requests in window</span>
+    count = redis.<span class="cmd">ZCOUNT</span>(key, window_start, now)
+
+    if count &lt; limit:
+        <span class="c"># Add this request</span>
+        redis.<span class="cmd">ZADD</span>(key, {f"{now}:{uuid.uuid4()}": now})
+        redis.<span class="cmd">EXPIRE</span>(key, window)   <span class="c"># Cleanup</span>
+        return True
+
+    return False</div>
+<div class="box r"><div class="t">Race condition</div>ZCOUNT + ZADD is <span class="warn">not atomic</span>. For strict enforcement, wrap both in a Lua script — or accept a slight over-limit under contention.</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="atomicity">7 · Atomicity: your distributed lock</h2>
+<div class="punch">
+Redis is <b>single-threaded</b> for command execution. Each command completes fully
+before the next starts. That's the whole basis of "no distributed lock needed" —
+the return value of an atomic mutating command <em>is</em> the lock.
+</div>
+<h3>Two workers, same timer</h3>
+<svg viewBox="0 0 720 230" role="img" aria-label="Two workers race to claim the same timer; only one ZREM returns 1">
+  <defs>
+    <marker id="wk" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+  </defs>
+  <rect x="40" y="24" width="290" height="182" rx="8" fill="#f2f3f8" stroke="#d6d8e4"/>
+  <rect x="390" y="24" width="290" height="182" rx="8" fill="#f2f3f8" stroke="#d6d8e4"/>
+  <text x="185" y="48" fill="#1f5fa8" font-size="13" text-anchor="middle" font-weight="bold">Worker A</text>
+  <text x="535" y="48" fill="#6a2cd0" font-size="13" text-anchor="middle" font-weight="bold">Worker B</text>
+
+  <rect x="60" y="64" width="250" height="40" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
+  <text x="185" y="82" fill="#1d1d2c" font-size="11" text-anchor="middle" font-weight="bold">ZRANGEBYSCORE</text>
+  <text x="185" y="96" fill="#5d5d72" font-size="9.5" text-anchor="middle">sees ["job:abc"]</text>
+  <rect x="410" y="64" width="250" height="40" rx="6" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="535" y="82" fill="#1d1d2c" font-size="11" text-anchor="middle" font-weight="bold">ZRANGEBYSCORE</text>
+  <text x="535" y="96" fill="#5d5d72" font-size="9.5" text-anchor="middle">sees ["job:abc"]</text>
+
+  <rect x="60" y="124" width="250" height="40" rx="6" fill="#e9f5f0" stroke="#0b7a55" stroke-width="2"/>
+  <text x="185" y="142" fill="#0b7a55" font-size="11" text-anchor="middle" font-weight="bold">ZREM "job:abc" returns 1</text>
+  <text x="185" y="156" fill="#5d5d72" font-size="9.5" text-anchor="middle">wins the claim</text>
+  <rect x="410" y="124" width="250" height="40" rx="6" fill="#fdecec" stroke="#3b3f8f" stroke-width="2"/>
+  <text x="535" y="142" fill="#3b3f8f" font-size="11" text-anchor="middle" font-weight="bold">ZREM "job:abc" returns 0</text>
+  <text x="535" y="156" fill="#5d5d72" font-size="9.5" text-anchor="middle">already claimed</text>
+
+  <rect x="60" y="174" width="250" height="24" rx="5" fill="#f2f3f8" stroke="#d6d8e4"/>
+  <text x="185" y="190" fill="#0b7a55" font-size="10" text-anchor="middle" font-weight="bold">execute(job)</text>
+  <rect x="410" y="174" width="250" height="24" rx="5" fill="#f2f3f8" stroke="#d6d8e4"/>
+  <text x="535" y="190" fill="#5d5d72" font-size="10" text-anchor="middle">skip (already claimed)</text>
+
+  <line x1="185" y1="104" x2="185" y2="122" stroke="#5d5d72" marker-end="url(#wk)"/>
+  <line x1="185" y1="164" x2="185" y2="172" stroke="#5d5d72" marker-end="url(#wk)"/>
+  <line x1="535" y1="104" x2="535" y2="122" stroke="#5d5d72" marker-end="url(#wk)"/>
+  <line x1="535" y1="164" x2="535" y2="172" stroke="#5d5d72" marker-end="url(#wk)"/>
+</svg>
+<div class="legend">Both workers see the same due timer, but Redis serializes their ZREMs — only one gets <b>1</b>. The return value is the lock.</div>
+
+<h3>Atomic commands for coordination</h3>
+<table>
+<tr><th>Command</th><th>Atomic guarantee</th></tr>
+<tr><td><code>ZREM</code></td><td>Only one caller gets 1</td></tr>
+<tr><td><code>ZPOPMIN</code></td><td>Returns AND removes atomically</td></tr>
+<tr><td><code>SETNX</code></td><td>Set only if not exists</td></tr>
+<tr><td><code>INCR</code></td><td>Increment and return</td></tr>
+<tr><td><code>GETDEL</code></td><td>Get and delete in one op</td></tr>
+</table>
+<div class="box r"><div class="t">Not atomic</div><code>if ZSCORE(x): ZREM(x)</code> — two commands means a <span class="warn">race condition</span>. Use a single command or a Lua script.</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="durability">8 · Durability</h2>
+<h3>Redis persistence options</h3>
+<table>
+<tr><th>Mode</th><th>How</th><th>Data loss</th><th>Performance</th></tr>
+<tr><td>None</td><td>RAM only</td><td class="no">Everything</td><td>Fastest</td></tr>
+<tr><td>RDB</td><td>Snapshot every N sec</td><td class="no">Last N seconds</td><td>Fast</td></tr>
+<tr><td>AOF (everysec)</td><td>Append log, fsync/sec</td><td>~1 second</td><td>Good</td></tr>
+<tr><td>AOF (always)</td><td>fsync every write</td><td class="yes">None</td><td>Slow</td></tr>
+</table>
+<h3>Tiered storage strategy</h3>
+<p>For critical long-term timers, keep cold timers in Postgres and promote them into
+Redis only as they approach their fire time.</p>
+<svg viewBox="0 0 880 130" role="img" aria-label="Tiered timer storage: Postgres to promotion job to Redis to workers">
+  <defs>
+    <marker id="fl" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5d5d72"/></marker>
+  </defs>
+  <rect x="20" y="40" width="180" height="56" rx="8" fill="#eef7f3" stroke="#0d6e87"/>
+  <text x="110" y="64" fill="#0d6e87" font-size="12" text-anchor="middle" font-weight="bold">Postgres</text>
+  <text x="110" y="82" fill="#5d5d72" font-size="9.5" text-anchor="middle">timers &gt; 1 day out</text>
+
+  <rect x="250" y="40" width="180" height="56" rx="8" fill="#fff7e6" stroke="#946200"/>
+  <text x="340" y="64" fill="#946200" font-size="12" text-anchor="middle" font-weight="bold">Promotion job</text>
+  <text x="340" y="82" fill="#5d5d72" font-size="9.5" text-anchor="middle">runs hourly</text>
+
+  <rect x="480" y="40" width="180" height="56" rx="8" fill="#fdecec" stroke="#3b3f8f"/>
+  <text x="570" y="64" fill="#3b3f8f" font-size="12" text-anchor="middle" font-weight="bold">Redis</text>
+  <text x="570" y="82" fill="#5d5d72" font-size="9.5" text-anchor="middle">timers &lt; 1 day</text>
+
+  <rect x="710" y="40" width="150" height="56" rx="8" fill="#f1eafb" stroke="#6a2cd0"/>
+  <text x="785" y="64" fill="#6a2cd0" font-size="12" text-anchor="middle" font-weight="bold">Workers</text>
+  <text x="785" y="82" fill="#5d5d72" font-size="9.5" text-anchor="middle">poll &amp; execute</text>
+
+  <line x1="200" y1="68" x2="248" y2="68" stroke="#5d5d72" marker-end="url(#fl)"/>
+  <line x1="430" y1="68" x2="478" y2="68" stroke="#5d5d72" marker-end="url(#fl)"/>
+  <line x1="660" y1="68" x2="708" y2="68" stroke="#5d5d72" marker-end="url(#fl)"/>
+</svg>
+<div class="legend">Cold timers live cheaply in Postgres; an hourly job promotes imminent ones into Redis where workers poll them.</div>
+<div class="box g"><div class="t">Interview sound bite</div>"Redis is durable with AOF, but I'd tier it — Postgres for timers more than a day out, Redis for imminent. Worst case Redis dies, I lose a second of timers, and idempotent handlers mean a double-fire is safe."</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="scaling">9 · Scaling <span class="n">— when single Redis isn't enough</span></h2>
+<table>
+<tr><th>Approach</th><th>How</th><th>Tradeoff</th></tr>
+<tr><td>Shard by time bucket</td><td><code>timers:2026-02-23-14</code></td><td>Natural partitioning, but must scan multiple keys</td></tr>
+<tr><td>Shard by hash</td><td><code>timers:{hash(id) % N}</code></td><td>Even distribution, but lose global ordering</td></tr>
+<tr><td>Redis Cluster</td><td>Automatic sharding</td><td>A single ZSET can't span slots</td></tr>
+<tr><td>Tiered storage</td><td>DB for cold, Redis for hot</td><td>Complexity, but handles billions</td></tr>
+</table>
+<h3>Hot key problem</h3>
+<p>90% of traffic is HIGH priority? That single key becomes a hot shard. Split it across
+several keys and have consumers fan out over all of them.</p>
+<div class="pre"><span class="c"># Split hot priority across multiple keys</span>
+shard = hash(job_id) % 4
+key   = f"queue:HIGH:{shard}"
+
+<span class="c"># Consumer reads from all shards</span>
+for shard in range(4):
+    result = redis.ZPOPMIN(f"queue:HIGH:{shard}", 1)</div>
+
+<!-- ---------------------------------------- -->
+<h2 id="cheat">10 · Interview cheat sheet</h2>
+<table>
+<tr><th>Problem</th><th>Say</th></tr>
+<tr><td class="tool">Timer / Scheduler</td><td>"ZSET, score = fire_time, poll with ZRANGEBYSCORE, claim with ZREM"</td></tr>
+<tr><td class="tool">Priority Queue</td><td>"ZSET, score = priority (lower = higher), consume with ZPOPMIN"</td></tr>
+<tr><td class="tool">Rate Limiter</td><td>"ZSET, score = timestamp, ZCOUNT for window, ZREMRANGEBYSCORE to clean"</td></tr>
+<tr><td class="tool">Distributed Lock</td><td>"ZREM return value — Redis is single-threaded, only one caller gets 1"</td></tr>
+<tr><td class="tool">At-least-once</td><td>"Move to processing set with visibility timeout, reaper moves back if expired"</td></tr>
+<tr><td class="tool">Durability</td><td>"AOF everysec for ~1s loss, or tier to Postgres for critical long-term"</td></tr>
+<tr><td class="tool">Scaling</td><td>"Shard by time bucket or hash, tier cold data to DB"</td></tr>
+</table>
+<div class="box g"><div class="t">The meta-point</div>The best distributed systems are <b>simple primitives composed carefully</b>: ZSET = skip list + hash. Atomicity = single thread. Lock = check the return value. No magic, just layers.</div>
+
+<div class="footer">"So easy, yet complex" — that's what makes it a great interview question.</div>
+
+</body>
+</html>
