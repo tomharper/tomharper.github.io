@@ -76,6 +76,7 @@
   <a href="#async">6 · Async: blocks / GCD / async-await / actors</a>
   <a href="#evolution">6.5 · Apple evolution: pthread → GCD → Combine → actors</a>
   <a href="#async">↳ Structured concurrency &amp; Tasks</a>
+  <a href="#evolution">↳ Forward-progress trap + MainActor-by-default</a>
   <a href="#race">7 · Data races &amp; how each prevents them</a>
   <a href="#memorder">8 · Atomics &amp; the memory model</a>
   <a href="#gotcha">9 · Gotchas worth naming</a>
@@ -340,7 +341,7 @@ your team reaches for the right layer and knows what the layers beneath are doin
 <tr><td class="k">2009→</td><td><b>GCD</b> — <code>dispatch_async</code></td><td>OS-managed pool; hand work to <em>queues</em> not threads; serial queue = lock-free mutual exclusion</td><td>fire-and-forget → <span class="warn">callback pyramids</span>, no return value, no cancellation, no structure (orphaned work)</td></tr>
 <tr><td class="k">2009→</td><td><b>GCD</b> — <code>dispatch_sync</code></td><td>run-and-wait; simple "do this now, block until done"</td><td><span class="warn">self-deadlock</span> (sync onto your own queue) + it <em>blocks a whole thread</em> while waiting → feeds thread explosion</td></tr>
 <tr><td class="k">2019→</td><td><b>Combine</b> (reactive)</td><td>composable async <em>streams</em>; declarative pipelines; backpressure — and the closest thing to "structured async" <em>while the language still had no async/await</em></td><td>steep operator zoo; <span class="warn">hard to debug</span>; verbose for one-shot; Apple-only; partly a stopgap, overtaken two years later</td></tr>
-<tr><td class="k">2021→</td><td><b>async/await + actors</b> (Swift 5.5)</td><td>straight-line async; structured cancellation; cooperative pool; <b>compiler-checked races</b>. <em>The first real language-level async — Swift had none for its first 7 years</em></td><td>actor reentrancy; <code>Sendable</code> friction (Swift 6); migration cost (but this is finally what <em>let</em> teams leave callbacks)</td></tr>
+<tr><td class="k">2021→</td><td><b>async/await + actors</b> (Swift 5.5)</td><td>straight-line async; structured cancellation; cooperative pool (~1 thread/core, tasks <em>suspend</em> not block → no thread exhaustion); <b>compiler-checked races</b>. <em>The first real language-level async — Swift had none for its first 7 years</em></td><td>actor reentrancy; <code>Sendable</code> friction (Swift 6); <b>the forward-progress contract</b> — block a pool thread (mutex/semaphore/GCD-sync) and you can deadlock all cores; migration cost</td></tr>
 </table>
 
 <div class="box y"><div class="t">The real root cause: two axes most developers never modeled correctly</div>
@@ -428,7 +429,66 @@ endpoint (structured concurrency + compiler-enforced isolation) is something
 than C++ on safety, while C++ retains more control. The practical takeaway:
 <b>Swift moved race-safety into the compiler; C++ leaves it to you</b> — so on a
 C++ codebase, invest in the discipline (RAII locks, ThreadSanitizer in CI) that
-Swift gets for free.</div>
+Swift gets for free. Where you can, <b>borrow Swift Concurrency's concepts into
+C++</b> by convention: structured task scope (don't fire-and-forget — own and join
+children), value/immutable types across boundaries, and a "never block the worker
+pool" rule if you build one. And when <b>mixing Swift and C++</b>, put an explicit
+<b>jumping-off point at the boundary</b> — a single, well-marked place where you hand
+off — so you don't accidentally mix threads that follow different rules (a
+cooperative-pool thread must not wander into blocking C++; blocking C++ work must be
+dispatched to an expendable thread before results bridge back).</div>
+
+<h3>The forward-progress contract <span class="n">— the cooperative-pool trap you WILL hit</span></h3>
+<div class="punch">
+This is the single most important operational difference, and the one that bites in
+production. <b>GCD blocks threads; Swift Concurrency must never block one.</b>
+</div>
+<table>
+<tr><th></th><th>GCD</th><th>Swift Concurrency</th></tr>
+<tr><td class="k">Pool</td><td>threads <em>per queue</em>; can spawn many (up to a global ceiling)</td><td>ONE <b>cooperative pool</b>, <b>~1 thread per core</b> (8-core device → ~8 threads)</td></tr>
+<tr><td class="k">On block</td><td>the thread is <b>blocked</b> and held; GCD spawns another to keep going → <b>thread exhaustion</b> (scheduling + memory overhead that tanks throughput)</td><td>on <code>await</code> the task <b>suspends and gives up the thread</b> for other tasks → no exhaustion</td></tr>
+<tr><td class="k">The contract</td><td>blocking is tolerated (at a cost)</td><td><b>forward progress required — never block a pool thread</b></td></tr>
+</table>
+<div class="box y"><div class="t">The deadlock: block all N cores and you're stuck</div>
+Because the cooperative pool has only <b>one thread per core</b>, blocking is
+catastrophic in a way it isn't under GCD. If you take a <b>mutex</b>, wait on a
+<b>semaphore</b>, or call <b>GCD code that <code>sync</code>s (locks)</b> from inside
+a Swift Concurrency task, you <em>block</em> that pool thread instead of suspending
+it. Do that on enough tasks and <b>you block all 8 threads on an 8-core device →
+hard deadlock</b>, with no thread left to make progress. GCD would have spawned more
+threads (degraded but alive); the cooperative pool by design will not.
+<p style="margin-top:0.5rem"><b>The practical rule (and the pattern to use):</b>
+when you must call into blocking GCD/legacy code from Swift Concurrency, get it
+<em>off</em> the cooperative pool — dispatch the work item to a GCD
+<b>async</b> queue so it blocks one of GCD's expendable threads, not a cooperative
+one, and bridge the result back with a <code>withCheckedContinuation</code>. Never
+let a blocking call run directly on a cooperative-pool thread.</p></div>
+<div class="pre"><span class="c">// WRONG — blocks a cooperative-pool thread (one of only ~core-count)</span>
+<span class="kw">func</span> load() <span class="kw">async</span> -> Data {
+  semaphore.wait()                 <span class="c">// ⛔ blocks, doesn't suspend</span>
+  <span class="kw">return</span> legacyBlockingRead()      <span class="c">// ⛔ blocking I/O on the pool</span>
+}
+<span class="c">// RIGHT — send blocking work to a GCD queue, suspend (not block) the task</span>
+<span class="kw">func</span> load() <span class="kw">async</span> -> Data {
+  <span class="kw">await withCheckedContinuation</span> { cont <span class="kw">in</span>
+    DispatchQueue.global().async {  <span class="c">// blocks a GCD thread, expendable</span>
+      cont.resume(returning: legacyBlockingRead())
+    }
+  }
+}</pre></div>
+
+<h3>MainActor-by-default <span class="n">— Approachable Concurrency (Swift 6.2, 2025)</span></h3>
+<div class="box"><div class="t">A recent shift that changes how <code>nonisolated</code> behaves</div>
+The newest direction ("Approachable Concurrency") adds an opt-in mode where code is
+<b><code>@MainActor</code> by default</b> — modules/files are main-actor-isolated
+unless you say otherwise. The intent: most app code <em>is</em> UI/main-thread code,
+so make that the safe default and stop forcing beginners to annotate everything.
+Consequences:
+<ul>
+<li><b>You now move work OFF the main actor explicitly</b> — mark a function <code>@concurrent</code> (or <code>nonisolated</code> appropriately) to run it off main. The old mental model (background by default, hop to main for UI) inverts to <b>main by default, opt out for background</b>.</li>
+<li><b><code>nonisolated</code> changed meaning</b> under this mode — it no longer implies "off the main actor" the way it used to; you reach for <code>@concurrent</code> to actually get parallelism.</li>
+<li><b>Net:</b> type-safety now bakes in concurrency, so the compiler manages more for you — but you can still hit pain points if you don't learn the new opt-out pitfalls (accidentally serializing everything on main because you forgot to mark the hot path <code>@concurrent</code>).</li>
+</ul></div>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="race">7 · Data races &amp; how each prevents them <span class="n">— the safety gradient</span></h2>
@@ -498,6 +558,8 @@ don't hand-pick orderings at all.</div>
 <tr><td class="k">Out-of-order completion</td><td class="objc">ObjC/Swift</td><td><b>concurrent</b> queues (and parallel <code>async</code> tasks) finish in <em>any</em> order, not submission order — two <code>dispatch_async</code>s to a concurrent queue can complete B-before-A. Don't assume FIFO results. Fix: use a <b>serial</b> queue (or actor) if order matters, or tag + reorder results. A serial queue preserves order; a concurrent one only preserves <em>start</em> order, not finish.</td></tr>
 <tr><td class="k">Main-thread UI</td><td class="objc">ObjC/Swift</td><td>UIKit not thread-safe → hop to main (<code>@MainActor</code> in Swift checks it)</td></tr>
 <tr><td class="k">Actor reentrancy</td><td class="swift">Swift</td><td>state can change across an <code>await</code> inside an actor — re-check invariants after suspension</td></tr>
+<tr><td class="k">Blocking the cooperative pool</td><td class="swift">Swift</td><td>mutex / semaphore / GCD-<code>sync</code> inside a Task blocks a pool thread (only ~1/core); block all cores → deadlock. Dispatch blocking work to a GCD async queue + <code>withCheckedContinuation</code>.</td></tr>
+<tr><td class="k">MainActor-by-default opt-out</td><td class="swift">Swift 6.2</td><td>under Approachable Concurrency, forgetting <code>@concurrent</code> serializes the hot path on main; <code>nonisolated</code> no longer means "off main"</td></tr>
 </table>
 
 <!-- ════════════════════════════════════════ -->
@@ -510,6 +572,8 @@ don't hand-pick orderings at all.</div>
 <li><b>Concurrency model:</b> locks (C++) → serial queues (GCD) → actors (Swift). Each layer hides the one below: a serial queue is mutual-exclusion-without-a-lock; an actor is a queue the compiler enforces.</li>
 <li><b>The Apple lineage:</b> pthread → GCD → Combine → async/await+actors. Buried, not replaced — each step moves the queue/sync decision out of your head and into the compiler. Reach for the layer that matches the work: streams→Combine/AsyncSequence, request/response+state→async-await, raw dispatch→GCD.</li>
 <li><b>Structured concurrency:</b> a child task can't outlive its scope — the parent awaits all children, cancellation flows down, errors flow up and cancel siblings. Default to <code>async let</code> (fixed fan-out) / task groups (dynamic); use unstructured <code>Task { }</code> only to bridge sync→async, and always store + cancel it.</li>
+<li><b>Forward progress (the prod trap):</b> Swift's cooperative pool is ~1 thread/core and tasks must <em>suspend</em>, never <em>block</em>. A mutex/semaphore/GCD-<code>sync</code> inside a task blocks a pool thread; block all N cores → deadlock (GCD would just spawn more threads). Dispatch blocking/legacy work to a GCD async queue and bridge back with <code>withCheckedContinuation</code>.</li>
+<li><b>MainActor-by-default (Swift 6.2):</b> Approachable Concurrency flips the default to main-isolated; you now opt <em>out</em> with <code>@concurrent</code> to run off main, and <code>nonisolated</code> changed meaning. Watch for accidentally serializing the hot path on main.</li>
 <li><b>Race safety:</b> C++/ObjC race-prevention is runtime discipline; Swift moves it to compile time with actors + Sendable (Swift 6 turns statically-detectable races into build errors — unless you use unsafe opt-outs, which stay TSan-only). On C++, buy that back with RAII locks + TSan in CI.</li>
 <li><b>Low level:</b> C++ exposes acquire/release ordering; default to <code>seq_cst</code> until a profile demands otherwise. In Swift, use an actor and never hand-pick orderings.</li>
 </ul></div>
