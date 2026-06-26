@@ -67,7 +67,7 @@
 </div>
 
 <div class="toc">
-  <a href="#tldr">0 · The one-paragraph mental model</a>
+  <a href="#tldr">0 · Overview</a>
   <a href="#mem">1 · Memory management</a>
   <a href="#own">2 · Ownership &amp; smart pointers / references</a>
   <a href="#val">3 · Value vs reference semantics</a>
@@ -83,13 +83,13 @@
 </div>
 
 <!-- ════════════════════════════════════════ -->
-<h2 id="tldr">0 · The one-paragraph mental model</h2>
+<h2 id="tldr">0 · Overview</h2>
 <div class="punch">
 <b><span class="cpp">C++</span></b>: you own memory; <b>RAII</b> ties lifetime to scope; <em>deterministic</em> destruction; concurrency is manual and the memory model is exposed (you can get it wrong, fast). <br>
 <b><span class="objc">Objective-C</span></b>: <b>ARC</b> = compiler-inserted retain/release on reference-counted objects; concurrency via <b>GCD</b> + blocks; almost no compile-time race safety. <br>
 <b><span class="swift">Swift</span></b>: <b>ARC</b> too, but <b>value types (structs) by default</b> + <b>async/await + actors + Sendable</b> push race-safety into the <em>type system</em> — the compiler rejects many data races.
 </div>
-<p>The throughline: <em>where does lifetime/safety get decided?</em> C++ at scope
+<p>The organizing question: <em>where does lifetime/safety get decided?</em> C++ at scope
 exit (RAII, deterministic). ObjC at runtime (refcount, you avoid cycles by hand).
 Swift increasingly at <b>compile time</b> (ownership + actor isolation checked by
 the compiler). Moving C++→Swift you trade manual control for compiler-enforced
@@ -238,15 +238,15 @@ dispatch_async(q, ^{ [self doWork]; });
 <span class="kw">let</span> c = Counter()
 <span class="kw">await</span> c.inc()             <span class="c">// suspension point</span></pre></div>
 </div>
-<div class="box"><div class="t">The evolution to narrate</div>
+<div class="box"><div class="t">Locks → queues → actors</div>
 <b>C++</b>: locks are explicit; <code>lock_guard</code> is RAII applied to locking
 (unlock on scope exit, even on throw) — the same RAII idea as memory.
 <b>ObjC/GCD</b>: a <em>serial queue gives you mutual exclusion without a lock</em> —
-hand work to a queue, it runs one-at-a-time. Big mental shift from locks.
+hand work to a queue, it runs one-at-a-time.
 <b>Swift actors</b>: the queue idea promoted into the type system — an
 <code>actor</code> serializes access to its own state, and the <em>compiler</em>
-forces you to <code>await</code> across the boundary. Locks → queues → actors is
-the throughline.</div>
+forces you to <code>await</code> across the boundary. Each step hides the one
+below.</div>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="async">6 · Async <span class="n">— callbacks → structured concurrency</span></h2>
@@ -368,7 +368,7 @@ It also <b>collapses both axes out of your head</b>: <code>await</code> doesn't
 block, so the sync/async footgun is gone; and <code>@MainActor</code> makes "runs
 on main" a <em>compiler-checked annotation</em> instead of a <code>DispatchQueue.main.async</code>
 you have to remember.</p>
-<p><b>The throughline:</b> each generation moves the queue/sync decision <em>out of
+<p><b>The pattern:</b> each generation moves the queue/sync decision <em>out of
 the developer's head and into the compiler</em> — because most developers never
 had a correct mental model of main-vs-background or sync-vs-async. That's why it's
 buried, not replaced: same machinery, each layer asks you to understand less.</p></div>
@@ -412,9 +412,10 @@ Pick the layer by the shape of the work, not by recency:
 <li><b>async/await + actors</b> — the default for new code: <em>request/response</em> async work and anything touching shared mutable state.</li>
 <li><b>Combine / <code>AsyncSequence</code></b> — genuine <em>streams of events over time</em> with operators (debounce search input, combine UI state). SwiftUI's <code>@Published</code> is Combine, so you'll keep it on the UI layer regardless.</li>
 <li><b>GCD</b> — still the substrate; reach for it directly only for simple one-off background dispatch or an explicit <code>DispatchQueue.main.async</code> hop in code not yet on the concurrency model.</li>
+<li><b>C++ (the parallel decision)</b> — no Apple layers; the same shape-of-work call maps to: a <b>thread pool</b> (<code>std::async</code> / a library executor) for request/response; <b>producer-consumer queues</b> for streams; raw <code>std::thread</code>/<code>jthread</code> only for long-lived dedicated threads. State that crosses threads → a <code>mutex</code>-guarded type or <code>atomic</code>. There's no actor/Sendable safety net — you supply the discipline.</li>
 </ul>
-Heuristic for the team: <b>streams → Combine/AsyncSequence; one-shot + state → async/await; raw dispatch → GCD.</b> The decision is stream-vs-request, not new-vs-old.</div>
-<div class="box y"><div class="t">The throughline that ties it to C++</div>
+Heuristic: <b>streams → Combine/AsyncSequence (Swift) or producer-consumer queue (C++); one-shot + state → async/await (Swift) or thread pool + mutex (C++); raw dispatch → GCD / <code>std::thread</code>.</b> The decision is stream-vs-request, in any language.</div>
+<div class="box y"><div class="t">How this compares to C++</div>
 Apple's arc is <b>callbacks → streams → structured concurrency</b>, and the
 endpoint (structured concurrency + compiler-enforced isolation) is something
 <b>C++ doesn't have</b> — C++ stopped at the "primitives" stage (threads,
@@ -504,7 +505,7 @@ don't hand-pick orderings at all.</div>
 <li><b>Race safety:</b> C++/ObjC race-prevention is runtime discipline; Swift moves it to compile time with actors + Sendable (Swift 6 makes a data race a build error). On C++, buy that back with RAII locks + TSan in CI.</li>
 <li><b>Low level:</b> C++ exposes acquire/release ordering; default to <code>seq_cst</code> until a profile demands otherwise. In Swift, use an actor and never hand-pick orderings.</li>
 </ul></div>
-<p class="sub">The throughline for anyone moving mobile→systems: the <em>hard
+<p class="sub">For anyone moving mobile→systems: the <em>hard
 concepts</em> (refcounting, retain cycles, queues) you already own from ObjC/Swift.
 C++ adds <b>sole ownership</b> (<code>unique_ptr</code>), <b>deterministic
 scope-bound cleanup</b> (RAII), and the <b>exposed memory model</b> (orderings) —
