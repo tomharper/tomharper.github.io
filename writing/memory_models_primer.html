@@ -325,7 +325,7 @@ DRAM, three different access shapes.
   <text x="230" y="192" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">MMU + TLB</text>
   <text x="230" y="210" text-anchor="middle" font-size="10" fill="#5d5d72">virtual → physical, per access</text>
   <rect x="90" y="240" width="280" height="56" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
-  <text x="230" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">L1 / L2 / L3 caches</text>
+  <text x="230" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">L1 / L2 / SLC caches</text>
   <text x="230" y="280" text-anchor="middle" font-size="10" fill="#5d5d72">64-byte lines, prefetch, coherent</text>
   <rect x="90" y="310" width="280" height="56" rx="6" fill="#eaf1fb" stroke="#1f5fa8"/>
   <text x="230" y="332" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f5fa8">registers → ALU</text>
@@ -403,7 +403,7 @@ DRAM, three different access shapes.
 <table>
 <tr><th>Axis</th><th>CPU</th><th>NN engine (transformer)</th><th>GPU shaders</th></tr>
 <tr><td class="k">How memory is referenced</td><td>raw virtual pointer → MMU</td><td>device pointer; weights pre-staged</td><td><b>descriptor / argument buffer</b> binds resources</td></tr>
-<tr><td class="k">On-chip staging</td><td>L1/L2/L3 caches (general)</td><td><b>SRAM scratchpad</b> (software-managed tiles)</td><td>texture cache + threadgroup memory</td></tr>
+<tr><td class="k">On-chip staging</td><td>L1/L2 + SLC (Apple has no per-core L3; SLC is the SoC-wide last level)</td><td><b>SRAM scratchpad</b> (software-managed tiles)</td><td>texture cache + threadgroup memory</td></tr>
 <tr><td class="k">Execution unit</td><td>scalar/SIMD ALU</td><td><b>MAC array</b>, fixed dataflow (systolic-style — the generic NN-accelerator/TPU pattern; Apple's exact ANE microarchitecture is undocumented)</td><td>shader cores + <b>fixed-function samplers</b></td></tr>
 <tr><td class="k">Memory layout</td><td>linear, cache-line aligned</td><td>tiled for matmul reuse</td><td><b>swizzled/tiled</b> textures, interleaved verts</td></tr>
 <tr><td class="k">Bound by</td><td>latency (cache misses)</td><td><b>bandwidth</b> (weight streaming) + SRAM size</td><td>fill rate / bandwidth / sampler throughput</td></tr>
@@ -489,6 +489,21 @@ consequences (and the reason the prep-set's "100GB to 8 GPUs" answer exists):
 <b>overlap copy with compute</b> using pinned buffers + streams, and prefer formats
 you can DMA without re-encoding (raw/contiguous, e.g. safetensors). On discrete,
 moving data is often costlier than computing on it.</div>
+
+<div class="box"><div class="t">When do you actually use DMA today?</div>
+You almost never program a DMA descriptor by hand — it's the <em>mechanism</em>
+under higher-level APIs. But it's running constantly:
+<ul>
+<li><b>Indirectly, all the time:</b> every <code>cudaMemcpy</code> / Metal blit is the DMA engine; NVMe SSDs DMA into RAM; NICs DMA packets into ring buffers; the display controller DMAs the framebuffer to the screen each refresh. The whole point is <b>keeping the CPU off the data path</b>.</li>
+<li><b>Deliberately, in high-perf data planes:</b> <b>kernel-bypass + zero-copy</b> — io_uring, RDMA/RoCE, DPDK — DMA data device→app-memory with neither CPU nor kernel touching it (how trading, storage, and ML fabrics hit line rate). <b>GPUDirect</b> DMAs straight from NIC/NVMe into GPU VRAM, skipping the host hop (the multi-node-training answer).</li>
+<li><b>By hand, only in:</b> driver / kernel code, embedded firmware (program the DMA controller directly to keep a tiny CPU free), or a custom kernel-bypass data plane.</li>
+</ul>
+<b>Apple note:</b> UMA deletes the <em>cross-bus</em> DMA copy (no PCIe hop), but
+Apple GPUs still have blit/DMA engines for layout conversions and
+<code>storageModePrivate</code> uploads — DMA the mechanism doesn't disappear, the
+PCIe round-trip does. The modern trend pushes further: zero-copy everywhere
+(io_uring, RDMA, GPUDirect, <code>sendfile</code>) and smart-NIC/DPU offload so the
+CPU never sees the bytes at all.</div>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="unified-sw">5 · Software-unified — CUDA Unified Memory <span class="n">— one pointer, two pools</span></h2>
