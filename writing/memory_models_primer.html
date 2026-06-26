@@ -63,6 +63,7 @@
   <a href="#security">7.5 · Memory security — ASLR + the Apple stack</a>
   <a href="#dev">8 · How this matters for developers (by scenario)</a>
   <a href="#compare">9 · Side-by-side &amp; gotchas</a>
+  <a href="#fromgl">10 · If you're coming from OpenGL ES / pre-Metal</a>
 </div>
 
 <!-- ════════════════════════════════════════ -->
@@ -683,6 +684,48 @@ pool?" (a soft, silent SSD-paging cliff).</div>
 <li><b>On UMA, reading GPU output before the command buffer completes</b> → you read stale/partial bytes. Coherence is handled; <em>ordering</em> is not — wait on completion.</li>
 <li><b>Over-pinning</b> → starves the swappable pool; the whole system degrades.</li>
 <li><b>Assuming UMA bandwidth is "free"</b> → CPU and GPU contend for one bus; a memory-bound GPU kernel can starve the CPU and vice-versa.</li>
+</ul></div>
+
+<!-- ════════════════════════════════════════ -->
+<h2 id="fromgl">10 · If you're coming from OpenGL ES / pre-Metal <span class="n">— what the driver was hiding</span></h2>
+<div class="punch">
+Metal shipped in <b>2014</b>, but <b>almost nobody switched until they were forced
+to</b> — and deprecation ≠ removal, which is the whole story. Apple <b>deprecated</b>
+OpenGL/OpenGL ES at <b>WWDC 2018</b> (iOS 12 / macOS Mojave), but deprecated code
+<em>keeps working</em> — it was just compiler warnings, so most apps ignored it. The
+<b>hard phase-in came around iOS 15 / ~2021</b>, when staying on GL stopped being
+viable in practice — <em>that's</em> the forcing function that actually moved people,
+not the 2018 announcement. So a "pre-Metal" mental model wasn't really a gap in 2014,
+or even at deprecation in 2018 — it became one around 2021. And almost none of this
+doc describes a <em>new machine</em>: it's the layer the <b>OpenGL ES driver was
+managing for you</b>. Your instinct that "the GPU just has memory and the driver
+deals with it" was <em>correct for GL ES</em>. Metal deliberately took that
+abstraction away and handed you the residency / sync / binding decisions — in
+exchange for predictable performance (no draw-time hitches).
+</div>
+<table>
+<tr><th>Concern</th><th>OpenGL ES (deprecated 2018, usable till ~2021) — driver did it</th><th>Metal (hard phase-in ~iOS 15 / 2021) — you do it</th></tr>
+<tr><td class="k">Buffers / binding</td><td>global state machine: <code>glBindBuffer</code>, <code>glUniform</code>, bind-set-draw</td><td>explicit <b>command buffers</b> + <b>argument/descriptor buffers</b>; no hidden global state (the shader path in §1.5)</td></tr>
+<tr><td class="k">Memory residency</td><td>driver decided where buffers lived &amp; when</td><td><b>you pick a storage mode</b> (<code>shared</code>/<code>private</code>/<code>memoryless</code>, §6/§1.7)</td></tr>
+<tr><td class="k">CPU/GPU sync</td><td>driver hid it (implicit fences)</td><td><b>explicit</b> — wait on command-buffer completion before reading GPU output (§7)</td></tr>
+<tr><td class="k">Shader compile</td><td>at draw time (GLSL) → unpredictable hitches</td><td>ahead-of-time <b>pipeline state objects</b> (MSL, a C++ dialect)</td></tr>
+<tr><td class="k">Validation</td><td>per-draw, in the driver</td><td>moved to build/encode time</td></tr>
+</table>
+<div class="box"><div class="t">The UMA twist specific to your background</div>
+Here's the part that's easy to miss: <b>every iPhone you ever shipped on already had
+unified memory</b> — the A-series SoCs were always one physical pool. But
+<b>OpenGL ES hid it completely</b>: no storage modes, no residency, you never once
+reasoned about whether CPU and GPU shared pages. So you <em>used</em> UMA hardware
+for years without touching the concept. What's genuinely new isn't "unified memory
+exists" — it's that (1) <b>Metal exposes the choice</b> you never had to make, and
+(2) <b>the Mac got UMA in 2020</b> (M1), bringing it to the desktop where the
+discrete/Intel split had always reigned, plus the <b>2020+ LLM-scale</b>
+bandwidth/capacity tradeoffs (§0.5 verdict).</div>
+<div class="box y"><div class="t">So read the rest of the doc as…</div>
+<ul>
+<li><b>§1–§2 (the stack, virtual/physical, user/kernel):</b> mostly unchanged since your era — the OS fundamentals GL also rode on. Familiar ground.</li>
+<li><b>§1.5–§1.8, §6 (consumers, on-chip tiers, storage modes):</b> the genuinely new surface — the residency/binding decisions Metal handed you that GL ES made for you.</li>
+<li><b>§0.5, §8 (UMA verdict, dev scenarios):</b> the 2020+ Mac-UMA + AI-workload story that postdates the whole transition — the actually-new-to-everyone part.</li>
 </ul></div>
 
 </body>

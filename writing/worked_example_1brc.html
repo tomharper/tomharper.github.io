@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Worked Example — One Billion Row Challenge (Swift)</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.62; max-width:1100px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.6rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--accent); margin:2.6rem 0 1rem; font-size:1.25rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--ink); margin:1.4rem 0 0.5rem; font-size:1rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--ink); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--ink); font-size:0.83rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul,ol { margin:0.4rem 0 0.6rem 1.4rem; font-size:0.9rem; } li { margin:0.3rem 0; }
+  a { color:var(--blue); }
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.84rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  td.k { font-weight:700; white-space:nowrap; }
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--green); padding:0.9rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; font-size:0.88rem; }
+  .box.y { border-color:var(--amber); } .box.y .t { color:var(--amber); }
+  .box.r { border-color:var(--orange); } .box.r .t { color:var(--orange); }
+  .box .t { color:var(--green); font-weight:700; margin-bottom:0.4rem; }
+  .warn { color:var(--orange); font-weight:700; }
+  .good { color:var(--green); font-weight:700; }
+  .pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1rem; font-size:0.79rem; overflow-x:auto; color:var(--ink); font-family:'SF Mono',ui-monospace,monospace; line-height:1.5; }
+  .pre .c { color:var(--muted); } .pre .kw { color:var(--purple); } .pre .bad { color:var(--orange); } .pre .ok { color:var(--green); }
+</style>
+</head>
+<body>
+
+<h1>Worked Example — The One Billion Row Challenge</h1>
+<div class="sub">1BRC in Swift: parse a ~13&nbsp;GB / 1,000,000,000-line file (<code>station;temperature</code>), compute min/mean/max per station, as fast as possible. The parsing is trivial; the <em>memory and concurrency</em> are everything — so it's a live-fire test of both primers (<a href="systems_concurrency_primer.html">concurrency</a> · <a href="memory_models_primer.html">memory models</a>). Grounded in a real Swift implementation (brennanMKE/BillionRowChallenge), with an honest principal-level critique.</div>
+
+<div class="punch">
+<b>The one lesson:</b> the bottleneck is never the CPU doing the math — it's getting
+bytes to the CPU without copying or scheduling overhead. Every 10× here is a memory
+or concurrency win. Naive <code>readLine()</code> + <code>Dictionary</code> +
+<code>Double</code> ≈ minutes; a tuned version ≈ 1–2&nbsp;s. <b>~100× — entirely
+from the systems techniques in the two primers.</b>
+</div>
+
+<h2>1 · What the reference code gets right <span class="n">— the memory primer in action</span></h2>
+<p>The implementation memory-maps the file and parses it in place — exactly the
+zero-copy story (memory primer §1.7):</p>
+<div class="pre"><span class="ok">// ✓ raw mmap — zero-copy, paged in on demand, parsed in place</span>
+dataPointer = mmap(nil, fileSize, PROT_READ, MAP_PRIVATE, fd, 0)
+              .assumingMemoryBound(to: CChar.self)
+close(fd)                       <span class="c">// mapping keeps its own reference — fd can close</span>
+segmentSize = fileSize / numberOfSegments</div>
+<ul>
+<li><b><span class="good">mmap, not read():</span></b> the 13&nbsp;GB never gets copied into a buffer; the OS pages it from SSD lazily and evicts under pressure. A buffered read loop loses because it copies every byte.</li>
+<li><b><span class="good">Correct segment-boundary handling:</span></b> the file is split into N segments; each worker's range is adjusted with <code>findNextNewline</code> — segment&nbsp;0 starts at byte&nbsp;0, every other segment skips its partial first line, and each extends its end to the next newline so no line is split across workers. This is the classic chunk-boundary off-by-a-line bug, handled properly.</li>
+</ul>
+<div class="box"><div class="t">Memory-primer concepts exercised</div>
+mmap / zero-copy (§1.7) · sequential read = perfect prefetch (§1.5 CPU path) ·
+<em>addressable ≠ resident</em> (§0.5): 13&nbsp;GB mmap'd is fine on a 16&nbsp;GB Mac,
+but on 8&nbsp;GB it pages to SSD and craters — the cliff in reverse.</div>
+
+<h2>2 · Where the win is thrown away <span class="n">— the two traps</span></h2>
+<div class="punch">
+You <code>mmap</code> to avoid copies… then copy every line into a <code>String</code>
+one line later. The reference does both of these — which makes it the perfect
+teaching contrast.</div>
+
+<h3>Trap 1 — a <code>String</code> (two allocations) per line</h3>
+<div class="pre"><span class="bad">// ✗ called 1,000,000,000 times</span>
+<span class="kw">extension</span> String {
+  <span class="kw">init</span>?(cString: UnsafePointer&lt;CChar&gt;, length: Int) {
+    <span class="kw">let</span> buffer = UnsafeBufferPointer(start: cString, count: length)
+    <span class="kw">self</span>.init(bytes: buffer.<span class="bad">map { UInt8(bitPattern: $0) }</span>,  <span class="c">// alloc #1: Array&lt;UInt8&gt;</span>
+              encoding: .utf8)                            <span class="c">// alloc #2: String storage + copy</span>
+  }
+}</div>
+<ul>
+<li><b>Two heap allocations + two copies per line, ×1B.</b> The <code>.map</code> builds a throwaway <code>Array&lt;UInt8&gt;</code>; <code>String(bytes:encoding:)</code> allocates again and copies. This is the <b>heap</b> (memory primer §1.8) on the hottest possible path — the mmap zero-copy win is undone immediately.</li>
+<li><b>It also defeats cache locality:</b> each String is a fresh heap object, scattered, cache-cold — the opposite of the in-place, prefetch-friendly mmap bytes.</li>
+<li><b><span class="warn">Latent correctness bug:</span></b> <code>String(cString:length:)</code> is failable → returns <code>nil</code> on any invalid UTF-8 byte → the iterator returns <code>nil</code> → the segment ends early, silently dropping the rest of its data.</li>
+</ul>
+
+<h3>Trap 2 — <code>AsyncSequence</code> for in-memory parsing</h3>
+<div class="pre"><span class="bad">// ✗ a suspension point per line — for zero I/O benefit</span>
+<span class="kw">struct</span> LineIterator: AsyncIteratorProtocol {
+  <span class="kw">mutating func</span> next() <span class="kw">async</span> -&gt; String? { ... }   <span class="c">// bytes are already resident!</span>
+}</div>
+<ul>
+<li><b>There is no I/O to await</b> — the bytes are mmap'd and resident. Marking the per-line read <code>async</code> adds a suspension point a billion times for nothing.</li>
+<li>This is the <b>forward-progress lesson inverted</b> (concurrency primer §6.5): async earns its keep when a task <em>suspends</em> on real I/O and frees a cooperative-pool thread. CPU-bound in-memory parsing never suspends — so <code>async</code> here is pure overhead, not a win.</li>
+</ul>
+
+<h2>3 · The fix <span class="n">— both primers applied</span></h2>
+<div class="punch">
+<b>Never make a <code>String</code>.</b> Parse the bytes in place, key the map on the
+raw name bytes, parse the temperature as an <b>integer</b>, and fan out one
+synchronous worker per core. Every change maps to a primer concept.</div>
+<div class="pre"><span class="kw">let</span> cores = ProcessInfo.processInfo.activeProcessorCount   <span class="c">// ~1 worker / core</span>
+<span class="kw">var</span> partials = [StationMap](repeating: .init(), count: cores)
+
+<span class="ok">// embarrassingly parallel + reduce — no shared state, no locks</span>
+DispatchQueue.concurrentPerform(iterations: cores) { i <span class="kw">in</span>
+  <span class="kw">let</span> (start, end) = newlineAdjustedBounds(i)   <span class="c">// same boundary logic as the ref</span>
+  <span class="kw">var</span> local = StationMap()                      <span class="c">// PRIVATE map — no contention</span>
+  <span class="kw">var</span> p = start
+  <span class="kw">while</span> p &lt; end {
+    <span class="kw">let</span> nameStart = p                           <span class="c">// station: scan to ';'</span>
+    <span class="kw">while</span> p.pointee != semicolon { p += 1 }
+    <span class="kw">let</span> nameLen = p - nameStart
+    p += 1
+    <span class="kw">var</span> neg = <span class="kw">false</span>; <span class="kw">if</span> p.pointee == minus { neg = <span class="kw">true</span>; p += 1 }
+    <span class="kw">var</span> val = 0                                 <span class="c">// temp: parse xx.x as int*10, no Double</span>
+    <span class="kw">while</span> p.pointee != newline {
+      <span class="kw">let</span> c = p.pointee
+      <span class="kw">if</span> c != dot { val = val * 10 + Int(c - zero) }
+      p += 1
+    }
+    <span class="kw">if</span> neg { val = -val }
+    p += 1
+    local.update(nameStart, nameLen, val)       <span class="c">// hash the raw bytes in place</span>
+  }
+  partials[i] = local
+}
+<span class="kw">let</span> result = merge(partials)                    <span class="c">// the reduce barrier — only sync point</span></div>
+
+<table>
+<tr><th>Fix</th><th>Why it's faster</th><th>Primer concept</th></tr>
+<tr><td class="k">Parse bytes in place (no String)</td><td>kills 2 allocs + 2 copies per line; stays on the cache-hot mmap pages</td><td>memory §1.7 zero-copy / §1.8 heap-avoidance</td></tr>
+<tr><td class="k">Key map on raw name bytes</td><td>~400 distinct stations → the <em>only</em> allocations are bounded (one per new station), not per line</td><td>memory §1.8 (heap = the bounded, shared thing)</td></tr>
+<tr><td class="k">Integer temp parse (xx.x → int*10)</td><td>integer ALU, no float parse/round; the NN-engine-style "avoid the slow unit" move</td><td>memory §1.5 (execution unit)</td></tr>
+<tr><td class="k">Open-addressing hash map, sized to fit cache</td><td>1B lookups → a cache miss per lookup is the whole runtime; keep it in L1/L2</td><td>memory §1.5 ("cache misses are the enemy")</td></tr>
+<tr><td class="k"><code>concurrentPerform</code>, 1 worker/core, private maps</td><td>CPU-bound, never blocks; no locks during parse; merge once</td><td>concurrency §6.5 (≈core-count, no exhaustion) + §7 (private state → no race)</td></tr>
+<tr><td class="k">Synchronous, not <code>async</code></td><td>no suspension points on work that never suspends</td><td>concurrency §6.5 (async only pays off on real I/O)</td></tr>
+</table>
+
+<div class="box"><div class="t">Why GCD here, not Swift Concurrency</div>
+This is pure CPU-bound compute that <em>never blocks</em> —
+<code>DispatchQueue.concurrentPerform(iterations: cores)</code> (GCD's parallel-for)
+is the natural fit: it runs exactly core-count iterations of uninterrupted work and
+joins. A <code>TaskGroup</code> works too, but you'd gain nothing and must be sure no
+parse step blocks a cooperative-pool thread (the forward-progress rule, §6.5). When
+the work is "saturate every core with non-blocking compute and reduce," GCD's
+parallel-for is the right tool — a case where newer isn't automatically better.</div>
+
+<h2>4 · The reduce step <span class="n">— the all-reduce, in miniature</span></h2>
+<p>Each worker produces a private station map; <code>merge</code> folds them into one.
+This is the same shape as the distributed-training all-reduce (the inference/training
+prep): <b>parallel, independent local work → one synchronization barrier at the
+end</b>. No locks during the parse (the expensive 99.99%); a single merge over ~400
+stations × N workers (trivial) at the close. Contend only where contention is cheap.</p>
+
+<h2>5 · The takeaways</h2>
+<ol>
+<li><b>mmap is necessary but not sufficient.</b> The reference does the hard part right, then copies every line into a String — so it's slow despite the zero-copy read. Zero-copy in, zero-copy <em>through</em>.</li>
+<li><b>Heap allocation in a hot loop is the silent killer.</b> 2 allocs/line × 1B dominates everything. Move allocation off the per-item path (bounded per-station, not per-line).</li>
+<li><b>Don't pay for async you don't use.</b> <code>AsyncSequence</code> over resident memory adds suspension overhead with no suspension benefit — the forward-progress rule, read the other way.</li>
+<li><b>Parallelism is the easy 2×–8×; memory layout is the 50×.</b> One-worker-per-core matters, but cache-resident map + no-copy parse + integer math is where the order of magnitude lives.</li>
+<li><b>Newer isn't automatically better.</b> GCD's <code>concurrentPerform</code> beats a TaskGroup here precisely because the work never blocks — match the tool to the work shape, not the calendar.</li>
+</ol>
+
+<p class="sub" style="margin-top:1.5rem">Reference implementation: brennanMKE/BillionRowChallenge (Swift). Critique and the improved approach are this author's; the "fix" code is illustrative (pointer/byte-parsing sketch), not a drop-in. Companion primers: <a href="systems_concurrency_primer.html">Apple Systems &amp; Concurrency</a> · <a href="memory_models_primer.html">Apple Memory Models</a>.</p>
+
+</body>
+</html>
