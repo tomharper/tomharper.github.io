@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rubric — Fair, defensible AI interview evaluation</title>
+<meta name="description" content="Rubric runs candidates through an adaptive AI interview and turns it into evidence-linked, calibrated, auditable scores — with a human making the final call.">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=chillax@400,500,600,700&f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root { --ink:#1d1d2c; --muted:#5d5d72; --line:#e4e5ee; --accent:#3b3f8f;
+          --green:#0b7a55; --wash:#f6f7fb; --wash2:#eef0fb; }
+  body { font-family:'Satoshi',-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
+         color:var(--ink); background:#fff; line-height:1.65; }
+  .wrap { max-width:960px; margin:0 auto; padding:0 24px; }
+  h1,h2,h3 { font-family:'Chillax',-apple-system,sans-serif; letter-spacing:-0.4px; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+
+  /* nav */
+  nav { border-bottom:1px solid var(--line); padding:16px 0; }
+  nav .wrap { display:flex; align-items:center; justify-content:space-between; }
+  .logo { font-family:'Chillax',sans-serif; font-weight:600; font-size:1.25rem; color:var(--ink); }
+  .logo b { color:var(--accent); }
+  nav a { font-size:0.9rem; color:var(--muted); margin-left:22px; }
+
+  /* hero */
+  .hero { padding:72px 0 56px; text-align:center; }
+  .hero h1 { font-size:3rem; font-weight:600; line-height:1.12; margin-bottom:18px; }
+  .hero .lede { font-size:1.2rem; color:var(--muted); max-width:640px; margin:0 auto 30px; }
+  .cta { display:inline-block; background:var(--accent); color:#fff; padding:13px 28px;
+         border-radius:8px; font-weight:600; font-size:1rem; }
+  .cta:hover { background:#2f3378; text-decoration:none; }
+  .cta.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); margin-left:10px; }
+  .tag { display:inline-block; background:var(--wash2); color:var(--accent); font-size:0.8rem;
+         font-weight:600; padding:4px 12px; border-radius:20px; margin-bottom:22px; }
+
+  /* sections */
+  section { padding:52px 0; border-top:1px solid var(--line); }
+  section h2 { font-size:1.7rem; font-weight:600; margin-bottom:8px; text-align:center; }
+  section .sub { color:var(--muted); text-align:center; max-width:620px; margin:0 auto 34px; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:22px; }
+  .card { border:1px solid var(--line); border-radius:12px; padding:24px; background:#fff; }
+  .card h3 { font-size:1.1rem; font-weight:600; margin-bottom:8px; color:var(--ink); }
+  .card p { font-size:0.94rem; color:var(--muted); }
+  .card .ic { font-size:1.4rem; margin-bottom:10px; }
+
+  /* who */
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  @media (max-width:680px){ .two { grid-template-columns:1fr; } }
+  .side { border:1px solid var(--line); border-radius:12px; padding:26px; }
+  .side.cand { background:var(--wash); }
+  .side.co { background:#f2f8f5; }
+  .side h3 { font-size:1.15rem; margin-bottom:6px; }
+  .side .role { font-size:0.8rem; font-weight:600; text-transform:uppercase; letter-spacing:0.6px; }
+  .side.cand .role { color:var(--accent); } .side.co .role { color:var(--green); }
+  .side ul { list-style:none; margin-top:14px; }
+  .side li { font-size:0.94rem; color:var(--muted); padding:5px 0 5px 22px; position:relative; }
+  .side li::before { content:"→"; position:absolute; left:0; color:var(--accent); }
+  .side.co li::before { color:var(--green); }
+
+  /* how */
+  .steps { counter-reset:s; max-width:680px; margin:0 auto; }
+  .step { display:flex; gap:16px; padding:14px 0; border-bottom:1px solid var(--line); }
+  .step:last-child { border-bottom:none; }
+  .step .num { counter-increment:s; font-family:'Chillax',sans-serif; font-weight:600;
+               color:var(--accent); font-size:1.1rem; min-width:26px; }
+  .step .num::before { content:counter(s); }
+  .step h3 { font-size:1.02rem; font-weight:600; margin-bottom:2px; }
+  .step p { font-size:0.92rem; color:var(--muted); }
+
+  /* principle strip */
+  .principle { background:var(--wash2); border-radius:14px; padding:34px; text-align:center; margin:8px 0; }
+  .principle p { font-size:1.22rem; font-weight:500; max-width:680px; margin:0 auto; }
+  .principle b { color:var(--accent); }
+
+  /* signup */
+  #signup { background:var(--ink); color:#fff; border-top:none; }
+  #signup h2 { color:#fff; } #signup .sub { color:#b9b9cc; }
+  .form { max-width:460px; margin:0 auto; }
+  .form .row { display:flex; gap:10px; margin-bottom:12px; }
+  .form input, .form select { width:100%; padding:12px 14px; border-radius:8px; border:none;
+         font-family:inherit; font-size:0.95rem; }
+  .form .full { width:100%; }
+  .form button { width:100%; background:var(--accent); color:#fff; border:none; padding:13px;
+         border-radius:8px; font-weight:600; font-size:1rem; cursor:pointer; }
+  .form button:hover { background:#5459c4; }
+  .form .fine { font-size:0.8rem; color:#9a9ab2; text-align:center; margin-top:12px; }
+  .form .fine a { color:#c4c4e6; }
+
+  footer { border-top:1px solid var(--line); padding:28px 0; text-align:center;
+           color:var(--muted); font-size:0.88rem; }
+  @media (max-width:600px){ .hero h1{font-size:2.1rem;} .form .row{flex-direction:column;} }
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <span class="logo"><b>Rubric</b></span>
+  <span>
+    <a href="#how">How it works</a>
+    <a href="#who">Who it's for</a>
+    <a href="#signup">Get early access</a>
+  </span>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <span class="tag">Early access</span>
+  <h1>Interviews you can<br>actually defend.</h1>
+  <p class="lede">Rubric runs candidates through an adaptive AI interview and turns it into
+  <b>evidence-linked, calibrated, auditable</b> scores — with a human making the final call.
+  Not a black box that decides who gets hired.</p>
+  <a href="#signup" class="cta">Get early access</a>
+  <a href="#how" class="cta ghost">See how it works</a>
+</div></header>
+
+<!-- WHAT / value props -->
+<section id="what"><div class="wrap">
+  <h2>Scoring you can stand behind</h2>
+  <p class="sub">A coding widget is a commodity. The hard, valuable part is an evaluation that's
+  fair, defensible, and holds up to scrutiny. That's what Rubric is built around.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">📋</div><h3>Rubric-anchored</h3>
+      <p>Every answer is scored against explicit criteria with worked anchors — not a vibe.
+      Two candidates are actually comparable.</p></div>
+    <div class="card"><div class="ic">🔍</div><h3>Evidence-linked</h3>
+      <p>No score without proof. Each rating cites the exact moments in the transcript it's based on,
+      so any decision is inspectable and contestable.</p></div>
+    <div class="card"><div class="ic">⚖️</div><h3>Bias-tested</h3>
+      <p>The judge is continuously checked for bias — the same answer, varied only by an irrelevant
+      signal, must score the same. Fails the check, it doesn't get used.</p></div>
+    <div class="card"><div class="ic">🎚️</div><h3>Adaptive</h3>
+      <p>Questions adjust to the candidate — deepen where they're strong, ease where they're not —
+      to find real signal fast, without repeating.</p></div>
+    <div class="card"><div class="ic">🙋</div><h3>Human in the loop</h3>
+      <p>The AI produces evidence; a person makes the call. Clear cases fast-track; the close ones
+      route to a human, who can override with a logged reason.</p></div>
+    <div class="card"><div class="ic">🗂️</div><h3>Auditable</h3>
+      <p>Every session is an append-only record tied to a rubric version. Replay it, contest it,
+      or hand it to an auditor. Built for regulated hiring.</p></div>
+  </div>
+</div></section>
+
+<!-- PRINCIPLE -->
+<section><div class="wrap">
+  <div class="principle"><p>The AI's output is <b>evidence for a decision — not the decision.</b>
+  A person always makes the call, and every score can be traced back to what the candidate
+  actually said.</p></div>
+</div></section>
+
+<!-- WHO -->
+<section id="who"><div class="wrap">
+  <h2>Two sides, one engine</h2>
+  <p class="sub">The same evaluation core serves candidates sharpening up and companies screening in.</p>
+  <div class="two">
+    <div class="side cand">
+      <span class="role">For candidates</span>
+      <h3>Practice that actually teaches</h3>
+      <ul>
+        <li>Adaptive mock interviews that meet you at your level</li>
+        <li>Feedback tied to specific things you said — and how to level up</li>
+        <li>Voice or text, on your schedule</li>
+        <li>See the rubric you're being measured against</li>
+      </ul>
+    </div>
+    <div class="side co">
+      <span class="role">For companies</span>
+      <h3>Signal you can hire on</h3>
+      <ul>
+        <li>Configure your own rubrics, rounds, and thresholds</li>
+        <li>Consistent, calibrated scores across every candidate</li>
+        <li>Replay any interview with the evidence behind each score</li>
+        <li>Human ratification + bias audits built in, not bolted on</li>
+      </ul>
+    </div>
+  </div>
+</div></section>
+
+<!-- HOW -->
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="sub">Configure once; every candidate runs the same fair, adaptive gauntlet.</p>
+  <div class="steps">
+    <div class="step"><span class="num"></span><div>
+      <h3>Configure the interview</h3>
+      <p>Define the rounds, the rubric dimensions and weights, and where the pass/review/reject
+      lines sit. Scores are versioned to this config.</p></div></div>
+    <div class="step"><span class="num"></span><div>
+      <h3>Calibrate the judge</h3>
+      <p>Before it's trusted, the evaluator is checked against ground truth and tested for bias.
+      A judge that doesn't pass doesn't score real candidates.</p></div></div>
+    <div class="step"><span class="num"></span><div>
+      <h3>Candidate interviews — adaptively</h3>
+      <p>An AI interviewer asks, follows up, and adjusts difficulty to the candidate. Voice or text.
+      Every turn is captured on one timeline.</p></div></div>
+    <div class="step"><span class="num"></span><div>
+      <h3>Evidence-linked scoring</h3>
+      <p>Each rubric dimension is scored with quoted evidence and a confidence — and it abstains
+      rather than guess when the signal isn't there.</p></div></div>
+    <div class="step"><span class="num"></span><div>
+      <h3>A human decides</h3>
+      <p>Clear results fast-track; the ambiguous middle routes to a person, who confirms or overrides
+      with a recorded reason. Fully auditable.</p></div></div>
+  </div>
+</div></section>
+
+<!-- SIGNUP -->
+<section id="signup"><div class="wrap">
+  <h2>Get early access</h2>
+  <p class="sub">We're onboarding a first set of teams and candidates. Tell us who you are
+  and we'll be in touch.</p>
+  <!-- Formspree: replace YOUR_FORM_ID with your endpoint id from formspree.io -->
+  <form class="form" action="https://formspree.io/f/YOUR_FORM_ID" method="POST">
+    <div class="row">
+      <input type="text" name="name" placeholder="Your name" required>
+      <input type="email" name="email" placeholder="Email" required>
+    </div>
+    <div class="row">
+      <select name="role" class="full" required>
+        <option value="" disabled selected>I'm interested as a…</option>
+        <option value="candidate">Candidate — I want to practice</option>
+        <option value="company">Company — I want to screen candidates</option>
+        <option value="both">Both / just curious</option>
+      </select>
+    </div>
+    <input type="text" name="org" class="full" placeholder="Company (optional)" style="margin-bottom:12px;">
+    <button type="submit">Request early access</button>
+    <p class="fine">No spam. We'll only email you about early access.
+      &nbsp;·&nbsp; <a href="mailto:d.thomas.harper@gmail.com?subject=Rubric%20early%20access">Or just email us</a></p>
+  </form>
+</div></section>
+
+<footer><div class="wrap">
+  Rubric — an experiment in fair, defensible interview evaluation by
+  <a href="index.html">Tom Harper</a>. ·
+  <a href="writing/interview_platform_design.html">Read the design doc</a>
+</div></footer>
+
+</body>
+</html>
