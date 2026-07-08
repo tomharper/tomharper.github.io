@@ -123,6 +123,12 @@
 </div></footer>
 
 <script>
+// ── backend config ───────────────────────────────────────────────────────────
+// Leave "" to score in-browser (heuristic judge, no server). Set to your deployed
+// Rubric API URL (see DEPLOY.md) to score with the REAL Claude judge; the demo
+// falls back to the in-browser judge automatically if the API is unreachable.
+const API_URL = "";   // e.g. "https://rubric-api.up.railway.app"
+
 // ── the rubric (mirrors interview_content.py's dimensions + anchors) ──────────
 const RUBRIC = [
   { name:"correctness", weight:0.5, anchors:{
@@ -187,26 +193,55 @@ function recommend(overall){
   return {k:"review", t:"human review"};
 }
 
-// ── render ────────────────────────────────────────────────────────────────
-function grade(){
-  const ans=document.getElementById("ans").value;
-  const dims=evaluate(ans), overall=aggregate(dims), rec=recommend(overall);
+// ── score: try the real API if configured, else the in-browser judge ─────────
+async function scoreAnswer(ans){
+  if(API_URL){
+    try{
+      const r = await fetch(API_URL.replace(/\/$/,"") + "/evaluate", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({question_id:"celeb-1", answer:ans}),
+      });
+      if(r.ok){
+        const d = await r.json();       // {overall, dimensions:[{dimension,score,evidence,confidence,rationale}]}
+        return { source:"real Claude judge", overall:d.overall,
+          dims: d.dimensions.map(x=>({name:x.dimension, score:x.score,
+            evidence:x.evidence||[], confidence:x.confidence,
+            anchor:x.rationale||""})) };
+      }
+    }catch(e){ /* network/API down → fall through to local judge */ }
+  }
+  const dims = evaluate(ans);
+  return { source:"in-browser demo judge", overall:aggregate(dims), dims };
+}
+
+// ── render (shared by both backends) ─────────────────────────────────────────
+function renderResult(res){
+  const rec=recommend(res.overall);
   let h = `<div class="overall">`;
-  h += overall==null ? `<span class="score">—</span><span class="of">insufficient signal</span>`
-                     : `<span class="score">${overall}</span><span class="of">/ 4</span>`;
+  h += res.overall==null ? `<span class="score">—</span><span class="of">insufficient signal</span>`
+                         : `<span class="score">${res.overall}</span><span class="of">/ 4</span>`;
   h += `<span class="rec ${rec.k}">${rec.t}</span></div>`;
-  for(const d of dims){
+  for(const d of res.dims){
     h += `<div class="dim"><div class="top"><span class="name">${d.name}</span>`;
     h += d.score==null ? `<span class="lvl abstain">abstained</span>`
                        : `<span class="lvl">${d.score}/4</span>`;
-    h += `<span class="conf">confidence ${Math.round(d.confidence*100)}%</span></div>`;
-    h += `<div class="anchor">${d.anchor}</div>`;
+    h += `<span class="conf">confidence ${Math.round((d.confidence||0)*100)}%</span></div>`;
+    if(d.anchor) h += `<div class="anchor">${d.anchor}</div>`;
     if(d.score==null){ h += `<div class="ev none">no score without evidence — the evaluator abstains</div>`; }
-    else for(const e of d.evidence){ h += `<div class="ev">"${e.replace(/"/g,'&quot;')}"</div>`; }
+    else for(const e of (d.evidence||[])){ h += `<div class="ev">"${String(e).replace(/"/g,'&quot;')}"</div>`; }
     h += `</div>`;
   }
+  h += `<div style="font-size:0.78rem;color:var(--muted);margin-top:12px;">scored by: ${res.source}</div>`;
   const out=document.getElementById("out"); out.innerHTML=h; out.style.display="block";
   out.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+async function grade(){
+  const ans=document.getElementById("ans").value;
+  if(!ans.trim()) return;
+  const out=document.getElementById("out");
+  out.innerHTML=`<div style="color:var(--muted);">Evaluating…</div>`; out.style.display="block";
+  renderResult(await scoreAnswer(ans));
 }
 function clearOut(){ document.getElementById("ans").value=""; const o=document.getElementById("out"); o.style.display="none"; o.innerHTML=""; }
 
