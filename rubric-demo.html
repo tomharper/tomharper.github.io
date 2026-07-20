@@ -43,6 +43,17 @@
   button.ghost:hover { background:var(--wash); }
   .try { font-size:0.85rem; color:var(--muted); }
   .try b { color:var(--accent); cursor:pointer; font-weight:600; } .try b:hover { text-decoration:underline; }
+  .count { font-size:0.8rem; color:var(--muted); margin-left:auto; }
+  .count.warn { color:var(--amber); }
+
+  /* example chips — the demo's best feature, made prominent */
+  .examples { margin-bottom:14px; }
+  .ex-label { font-size:0.86rem; color:var(--muted); display:block; margin-bottom:8px; }
+  .ex-chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { background:var(--wash); color:var(--ink); border:1px solid var(--line);
+          padding:7px 13px; border-radius:20px; font-size:0.85rem; font-weight:500;
+          cursor:pointer; font-family:inherit; }
+  .chip:hover { border-color:var(--accent); color:var(--accent); background:var(--wash2); }
 
   /* results */
   #out { display:none; margin-top:6px; }
@@ -93,15 +104,20 @@
       knows person b. A "celebrity" is known by everyone but knows no one. Find the celebrity
       in as few calls as possible — and explain why your approach works.</div>
     <div class="qmeta">Scored on: correctness (50%) · communication (25%) · depth (25%)</div>
-    <textarea id="ans" placeholder="Type your answer here… (or load an example below)"></textarea>
+    <div class="examples">
+      <span class="ex-label">Short on time? Load an example and see how it scores:</span>
+      <div class="ex-chips">
+        <button class="chip" onclick="ex('strong')">✓ A strong answer</button>
+        <button class="chip" onclick="ex('partial')">◑ Partially right</button>
+        <button class="chip" onclick="ex('fluent')">✕ Confident but wrong</button>
+        <button class="chip" onclick="ex('thin')">– Too little to judge</button>
+      </div>
+    </div>
+    <textarea id="ans" placeholder="…or write your own answer here, then press ⌘/Ctrl + Enter" oninput="updateCount()"></textarea>
     <div class="controls">
-      <button onclick="grade()">Evaluate my answer</button>
+      <button onclick="grade()">Evaluate answer</button>
       <button class="ghost" onclick="clearOut()">Clear</button>
-      <span class="try">Load an example:
-        <b onclick="ex('strong')">strong</b> ·
-        <b onclick="ex('partial')">partial</b> ·
-        <b onclick="ex('fluent')">fluent-but-wrong</b> ·
-        <b onclick="ex('thin')">too thin</b></span>
+      <span id="count" class="count"></span>
     </div>
   </div>
 
@@ -251,7 +267,23 @@ const EXAMPLES = {
   fluent:"Great question. I would simply and carefully loop over every pair of people and check all of them thoroughly, which is clean, readable, and easy to maintain and reason about.",
   thin:"not sure, maybe loop"
 };
-function ex(k){ document.getElementById("ans").value=EXAMPLES[k]; grade(); }
+function ex(k){ document.getElementById("ans").value=EXAMPLES[k]; updateCount(); grade(); }
+
+// live word/char feedback — makes the "too thin → abstain" threshold visible
+function updateCount(){
+  const ans=document.getElementById("ans").value;
+  const words=ans.trim().split(/\s+/).filter(Boolean).length;
+  const el=document.getElementById("count");
+  if(words===0){ el.textContent=""; el.className="count"; return; }
+  el.textContent = `${words} word${words===1?"":"s"}`
+    + (words<5 ? " · too thin to score" : "");
+  el.className = words<5 ? "count warn" : "count";
+}
+
+// keyboard submit — ⌘/Ctrl + Enter, the expected pattern
+document.getElementById("ans").addEventListener("keydown", e=>{
+  if((e.metaKey||e.ctrlKey) && e.key==="Enter"){ e.preventDefault(); grade(); }
+});
 </script>
 </body>
 </html>
