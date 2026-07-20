@@ -28,6 +28,12 @@
            font-weight:600; padding:3px 11px; border-radius:14px; margin-bottom:14px; }
 
   .panel { border:1px solid var(--line); border-radius:14px; padding:26px; margin:18px 0; }
+  .qtabs { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; }
+  .qtab { background:#fff; border:1px solid var(--line); color:var(--muted); padding:6px 14px;
+          border-radius:8px; font-size:0.85rem; font-weight:500; cursor:pointer;
+          font-family:inherit; text-transform:capitalize; }
+  .qtab:hover { border-color:var(--accent); color:var(--accent); }
+  .qtab.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .qlabel { font-size:0.76rem; font-weight:700; text-transform:uppercase; letter-spacing:0.7px;
             color:var(--accent); margin-bottom:6px; }
   .qtext { font-size:1.08rem; font-weight:500; margin-bottom:8px; }
@@ -99,10 +105,9 @@
 
 <div class="wrap">
   <div class="panel">
-    <div class="qlabel">Question · algorithms · difficulty 4/5</div>
-    <div class="qtext">You have N people, and <code>knows(a, b)</code> tells you whether person a
-      knows person b. A "celebrity" is known by everyone but knows no one. Find the celebrity
-      in as few calls as possible — and explain why your approach works.</div>
+    <div id="qtabs" class="qtabs"></div>
+    <div id="qlabel" class="qlabel">Question · algorithms · difficulty 4/5</div>
+    <div id="qtext" class="qtext"></div>
     <div class="qmeta">Scored on: correctness (50%) · communication (25%) · depth (25%)</div>
     <div class="examples">
       <span class="ex-label">Short on time? Load an example and see how it scores:</span>
@@ -145,19 +150,81 @@
 // falls back to the in-browser judge automatically if the API is unreachable.
 const API_URL = "";   // e.g. "https://rubric-api.up.railway.app"
 
-// ── the rubric (mirrors interview_content.py's dimensions + anchors) ──────────
-const RUBRIC = [
-  { name:"correctness", weight:0.5, anchors:{
-      1:"no working approach", 2:"right idea (eliminate/O(N)) but no verification",
-      3:"elimination + verification, minor gaps", 4:"correct O(N): each call eliminates one, then verify" } },
+const PASS=3.5, FAIL=2.5;
+
+// ── the question bank (each carries its own scoring signals + rubric anchors) ─
+// A simplified in-browser judge: correctness needs BOTH a "core" idea AND a
+// "rigor" marker (verify / prove / handle edge case) to hit 4 — mirroring the
+// real engine's "narrows vs proves" distinction. depth rewards a "why".
+const QUESTIONS = [
+  {
+    id:"celeb", skill:"algorithms", diff:4,
+    prompt:`You have N people, and <code>knows(a, b)</code> tells you whether person a
+      knows person b. A "celebrity" is known by everyone but knows no one. Find the
+      celebrity in as few calls as possible — and explain why your approach works.`,
+    core:/eliminat|disqualif|rule out|candidate/, rigor:/verif|confirm|\bcheck\b|prove/,
+    fast:/o\(n\)|order n|linear|n-1/, why:/invariant|because|narrow|doesn't prove|only|since/,
+    coreEv:["eliminat","disqualif","candidate","rule out"],
+    whyEv:["invariant","because","narrow","prove","since"],
+    anchors:{
+      correctness:{2:"right idea but no verification", 3:"elimination + verify, minor gaps",
+                   4:"O(N): each call eliminates one, then verify"},
+      depth:{2:"some reasoning", 3:"explains why it works",
+             4:"names the invariant AND why verification is required"} },
+    examples:{
+      strong:"The key insight is that each knows(a, b) call eliminates exactly one candidate: if a knows b, then a can't be the celebrity; if a doesn't know b, then b isn't known by everyone. After N-1 calls one survivor remains. Then I verify that survivor with the remaining checks, because elimination only narrows the field — it doesn't prove the invariant. Total O(N).",
+      partial:"You can eliminate people one at a time with O(N) comparisons until a single candidate is left.",
+      fluent:"Great question. I would simply and carefully loop over every pair of people and check all of them thoroughly, which is clean, readable, and easy to maintain and reason about.",
+      thin:"not sure, maybe loop" }
+  },
+  {
+    id:"kadane", skill:"arrays", diff:2,
+    prompt:`Given an array of integers (which may be negative), find the maximum sum of any
+      contiguous subarray — and explain your approach.`,
+    core:/running sum|current sum|kadane|reset|restart|track/, rigor:/negative|reset|start over|drop/,
+    fast:/o\(n\)|linear|one pass|single pass/, why:/because|since|no future|extend|greedy/,
+    coreEv:["running sum","kadane","reset","track","current sum"],
+    whyEv:["because","negative","extend","greedy","no future"],
+    anchors:{
+      correctness:{2:"brute force or vague", 3:"running-sum idea, minor gaps",
+                   4:"Kadane: running sum, reset when negative, track best"},
+      depth:{2:"some reasoning", 3:"explains the running sum",
+             4:"explains why you drop a negative prefix (no future gain)"} },
+    examples:{
+      strong:"I use Kadane's algorithm: keep a running sum as I scan left to right; if the running sum goes negative I reset it to zero, because a negative prefix can only hurt any subarray that extends past it. I track the best sum seen. One pass, O(n). No verification pass needed since the property is exact at each index.",
+      partial:"Keep a running sum across the array and remember the largest one you've seen. O(n).",
+      fluent:"I'd carefully consider every possible contiguous subarray and sum each of them up thoroughly to be completely sure I find the true maximum, which is robust and easy to verify.",
+      thin:"add them up" }
+  },
+  {
+    id:"cycle", skill:"graphs", diff:3,
+    prompt:`How would you detect whether a directed graph contains a cycle?
+      Walk through your approach and why it's correct.`,
+    core:/dfs|depth.first|visit|stack|recursion/, rigor:/on.stack|in.progress|gray|back edge|currently/,
+    fast:/o\(v|linear|each (node|edge) once/, why:/because|back edge|still on|means a cycle|since/,
+    coreEv:["dfs","on-stack","back edge","visiting","recursion"],
+    whyEv:["because","back edge","still on","since","means"],
+    anchors:{
+      correctness:{2:"visited-set only (misses direction)", 3:"DFS + stack idea, minor gaps",
+                   4:"DFS with on-stack set; back-edge to a node on the stack = cycle"},
+      depth:{2:"some reasoning", 3:"explains the traversal",
+             4:"explains why a back edge to an in-progress node proves a cycle"} },
+    examples:{
+      strong:"DFS with three states per node: unvisited, in-progress (on the current recursion stack), and done. During the traversal, if I reach a node that's still in-progress — currently on the stack — that's a back edge, which means a cycle. A plain visited set isn't enough because it ignores direction. O(V+E), each node and edge once.",
+      partial:"Do a DFS and keep a visited set; if you hit a node you've already visited there might be a cycle.",
+      fluent:"I would thoroughly and systematically explore the entire graph very carefully, examining all the nodes and all the edges completely to be absolutely certain about its structure.",
+      thin:"use a graph" }
+  },
+];
+let Q = QUESTIONS[0];   // active question
+
+function RUBRIC_FOR(q){ return [
+  { name:"correctness", weight:0.5, anchors:{1:"no working approach", ...q.anchors.correctness} },
   { name:"communication", weight:0.25, anchors:{
       1:"unclear, no structure", 2:"followable but rambling",
       3:"clear and mostly structured", 4:"crisp: insight stated first, then justified" } },
-  { name:"depth", weight:0.25, anchors:{
-      1:"answer only", 2:"some reasoning",
-      3:"explains why it works", 4:"names the invariant AND why verification is required" } },
-];
-const PASS=3.5, FAIL=2.5;
+  { name:"depth", weight:0.25, anchors:{1:"answer only", ...q.anchors.depth} },
+]; }
 
 // pull short evidence spans containing any needle (the "cite the transcript" rule)
 function spans(text, needles){
@@ -173,22 +240,21 @@ function spans(text, needles){
 function evaluate(ans){
   const words=ans.trim().split(/\s+/).filter(Boolean).length;
   const low=ans.toLowerCase();
-  return RUBRIC.map(d=>{
+  const rubric=RUBRIC_FOR(Q);
+  return rubric.map(d=>{
     if(words < 5) return {name:d.name, score:null, evidence:[], confidence:0.2,
                           anchor:"insufficient signal to score", why:"abstain"};
     let score, ev;
     if(d.name==="correctness"){
-      const elim = /eliminat|disqualif/.test(low);
-      const verif = /verif|confirm|\bcheck\b/.test(low);
-      const on = /o\(n\)|order n|linear/.test(low);
-      score = (elim && verif) ? 4 : ((elim||on) ? 3 : 2);
-      ev = spans(ans, ["eliminat","verif","disqualif","O(N)","order n","confirm"]);
+      const core=Q.core.test(low), rigor=Q.rigor.test(low), fast=Q.fast.test(low);
+      score = (core && rigor) ? 4 : ((core||fast) ? 3 : 2);
+      ev = spans(ans, Q.coreEv.concat(["verify","confirm","prove"]));
     } else if(d.name==="communication"){
       score = (/[.;]\s/.test(ans) && words>25) ? 4 : (words>12 ? 3 : 2);
       ev = [ans.split(/[.;]/)[0].slice(0,50).trim()];
     } else { // depth
-      score = /invariant|because|required|narrow|why/.test(low) ? 4 : (words>18 ? 3 : 2);
-      ev = spans(ans, ["invariant","because","required","narrow","prove"]);
+      score = Q.why.test(low) ? 4 : (words>18 ? 3 : 2);
+      ev = spans(ans, Q.whyEv);
     }
     if(ev.length===0) ev=[ans.slice(0,50).trim()];          // a judge always cites something
     // ENFORCE the evidence contract: a score with no real evidence → abstain
@@ -198,8 +264,8 @@ function evaluate(ans){
 }
 
 function aggregate(dims){
-  let w=0,s=0;
-  RUBRIC.forEach((d,i)=>{ if(dims[i].score!=null){ w+=d.weight; s+=d.weight*dims[i].score; } });
+  const rubric=RUBRIC_FOR(Q); let w=0,s=0;
+  rubric.forEach((d,i)=>{ if(dims[i].score!=null){ w+=d.weight; s+=d.weight*dims[i].score; } });
   return w < 0.5 ? null : Math.round((s/w)*10)/10;
 }
 function recommend(overall){
@@ -261,13 +327,7 @@ async function grade(){
 }
 function clearOut(){ document.getElementById("ans").value=""; const o=document.getElementById("out"); o.style.display="none"; o.innerHTML=""; }
 
-const EXAMPLES = {
-  strong:"The key insight is that each knows(a, b) call eliminates exactly one candidate: if a knows b, then a can't be the celebrity; if a doesn't know b, then b isn't known by everyone so b can't be. After N-1 calls only one survivor remains. Then I verify that survivor with the remaining checks, because elimination only narrows the field — it doesn't prove the invariant. Total O(N).",
-  partial:"You can eliminate people one at a time with O(N) comparisons until a single candidate is left.",
-  fluent:"Great question. I would simply and carefully loop over every pair of people and check all of them thoroughly, which is clean, readable, and easy to maintain and reason about.",
-  thin:"not sure, maybe loop"
-};
-function ex(k){ document.getElementById("ans").value=EXAMPLES[k]; updateCount(); grade(); }
+function ex(k){ document.getElementById("ans").value=Q.examples[k]; updateCount(); grade(); }
 
 // live word/char feedback — makes the "too thin → abstain" threshold visible
 function updateCount(){
@@ -280,10 +340,31 @@ function updateCount(){
   el.className = words<5 ? "count warn" : "count";
 }
 
+// ── question switching ───────────────────────────────────────────────────────
+function setQuestion(id){
+  Q = QUESTIONS.find(q=>q.id===id) || QUESTIONS[0];
+  document.getElementById("qtext").innerHTML = Q.prompt;
+  document.getElementById("qlabel").textContent =
+    `Question · ${Q.skill} · difficulty ${Q.diff}/5`;
+  document.querySelectorAll(".qtab").forEach(t=>
+    t.classList.toggle("on", t.dataset.id===Q.id));
+  clearOut();
+  updateCount();
+}
+function renderTabs(){
+  const wrap=document.getElementById("qtabs");
+  wrap.innerHTML = QUESTIONS.map(q=>
+    `<button class="qtab${q.id===Q.id?" on":""}" data-id="${q.id}"
+       onclick="setQuestion('${q.id}')">${q.skill}</button>`).join("");
+}
+
 // keyboard submit — ⌘/Ctrl + Enter, the expected pattern
 document.getElementById("ans").addEventListener("keydown", e=>{
   if((e.metaKey||e.ctrlKey) && e.key==="Enter"){ e.preventDefault(); grade(); }
 });
+
+renderTabs();
+setQuestion(QUESTIONS[0].id);
 </script>
 </body>
 </html>
