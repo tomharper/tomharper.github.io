@@ -731,6 +731,7 @@ not the models.</div>
   <path d="M430,272 L668,272" stroke="#946200" marker-end="url(#a4)"/>
   <text x="550" y="290" fill="#946200" font-size="11" text-anchor="middle" font-weight="bold">perceived ≈ 550ms</text>
 </svg>
+<div class="legend">The bars that start <em>before</em> the endpoint line (STT partials, speculative prefill) are work done while the user is still talking — that overlap is why wall-clock is a waterfall, not a sum. Only the endpointing wait, the final STT tail, decode, TTS first-byte, and playout fall to the right of the gate.</div>
 <table>
 <tr><th>Stage</th><th>Naive</th><th>Tuned</th><th>How it's tuned</th></tr>
 <tr><td>Network in (jitter buf)</td><td class="num">40ms</td><td class="num">20ms</td><td>WebRTC tunable; PSTN fixed</td></tr>
@@ -742,6 +743,12 @@ not the models.</div>
 <tr><td>Net out + playout</td><td class="num">60ms</td><td class="num">30ms</td><td>μ-law re-encode on PSTN</td></tr>
 <tr class="tot"><td>MOUTH-TO-MOUTH</td><td class="num">~1.4s</td><td class="num">~550ms</td><td>pipelined, not summed</td></tr>
 </table>
+<ul>
+<li><b>Streaming STT</b> → the transcript is basically ready at endpoint; you pay only the finalization tail, not the whole utterance.</li>
+<li><b>Speculative LLM prefill</b> → start prefilling on the partial transcript; if it's stable, TTFT is near-instant at endpoint. Cancel/redo if the tail changes the meaning (cost: wasted prefill — cheap relative to the latency win).</li>
+<li><b>Streaming TTS + sentence chunking</b> → emit audio for clause 1 while the LLM writes clause 2. First-audio is what the user feels.</li>
+<li><b>Prompt caching</b> → the system prompt + conversation history are a cache hit every turn; only the new turn is fresh prefill. (KV-cache reuse — ties to <code>14_inference_server</code>, §11.)</li>
+</ul>
 
 <!-- ════════════════════════════════════════ -->
 <h2 id="infra">15 · Infra, GPUs &amp; economics</h2>
