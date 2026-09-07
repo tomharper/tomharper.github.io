@@ -405,6 +405,11 @@ reported up to time T.</p>
     while buffer.peek().event_time <= W:
         emit(buffer.pop())                           <span class="c"># commit in event-time order → §10</span>
 <span class="c"># idle stream: heartbeat advances its watermark so silence can't freeze the timeline</span></div>
+<ul>
+<li><b>Watermark <code>W = min over streams</code></b> — you can only safely commit up to the point your <em>slowest-reporting</em> stream has reached. One quiet stream holds the line (same straggler dynamic as the training all-reduce barrier).</li>
+<li><b>Idle-stream timeout.</b> If a stream goes silent (user stops gesturing), its watermark would freeze the timeline forever. Advance it with a heartbeat/max-wait so a silent modality can't stall the conversation. (Mirrors the batcher's size-OR-timer: commit on watermark OR deadline.)</li>
+<li><b>Co-temporal bundling.</b> Events within a small ε window at the same event-time are fused into one enriched token rather than emitted separately (the prosody spike <em>belongs to</em> that word).</li>
+</ul>
 <p><b>Early vs late fusion:</b> use <b>late fusion</b> — each specialist emits tags,
 models are swappable, degrades gracefully if one drops. Early fusion (one model on
 raw features) is richer but $$$, tightly coupled, and loses the per-channel swap
