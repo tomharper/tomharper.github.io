@@ -234,6 +234,23 @@ is for the <em>last mile to a browser/app</em>; WebSocket is for everything behi
 <li><b>The tax you accept with WS: TCP head-of-line blocking.</b> On a lossy network a dropped packet stalls everything behind it (WebRTC would just drop+conceal). Mitigate with small frames, a tight network path (regional pinning), and treating the WS as reliable-but-bursty. For server↔service and Twilio (already past the carrier) this is fine; for last-mile-to-a-phone-on-bad-wifi, WebRTC wins.</li>
 <li><b>Barge-in over WS = a control message, not a media signal.</b> You send a <code>clear</code>/<code>interrupt</code> frame to flush buffered outbound audio (Twilio: the <code>clear</code> message; your own protocol: an event). Same single-Event cancel as <code>10_audio_pipeline_interruptible</code>, just delivered as a WS control frame.</li>
 </ul></div>
+
+<div class="box g">
+<div class="t">LiveKit's shape, for contrast — telephony bridging without a CPaaS</div>
+<p>Per LiveKit's own docs, agents are <b>"full realtime participants"</b> in a room:
+<b>"LiveKit WebRTC is used between the frontend and the agent, while the agent
+communicates with your backend using HTTP and WebSockets."</b> Telephony isn't
+native the way it is on Twilio — it's bridged via <b>LiveKit SIP</b>: a SIP trunk
+plus <em>dispatch rules</em> turn an inbound phone call into a SIP participant
+inside the room, hitting the same 8kHz μ-law ceiling on that leg (the gateway
+transcodes to the room's codec — the ceiling is telephony-network-wide, not
+vendor-specific, per §3's codec table). Two other differences worth knowing: no
+managed STT+TTS bundle (ConversationRelay's analogue doesn't exist on LiveKit —
+plugins for STT/LLM/TTS run in your own agent process), and <b>Krisp noise
+cancellation ships as an integrated LiveKit feature</b> rather than something you
+bolt on before STT yourself. LiveKit's SFU is open-source and self-hostable, or
+LiveKit Cloud.</p>
+</div>
 <div class="pre"><span class="c"># Twilio Media Streams = a WebSocket your server accepts. Frame shape:</span>
 { "event":"start",  "start":{"streamSid":"...","mediaFormat":{"encoding":"audio/x-mulaw","sampleRate":8000}} }
 { "event":"media",  "media":{"payload":"&lt;base64 μ-law 20ms&gt;","timestamp":"1234"} }   <span class="c"># inbound audio</span>
@@ -743,6 +760,7 @@ not the models.</div>
 <tr><td>Net out + playout</td><td class="num">60ms</td><td class="num">30ms</td><td>μ-law re-encode on PSTN</td></tr>
 <tr class="tot"><td>MOUTH-TO-MOUTH</td><td class="num">~1.4s</td><td class="num">~550ms</td><td>pipelined, not summed</td></tr>
 </table>
+<h3>Why you stream and pipeline <span class="n">— the waterfall, not a sum</span></h3>
 <ul>
 <li><b>Streaming STT</b> → the transcript is basically ready at endpoint; you pay only the finalization tail, not the whole utterance.</li>
 <li><b>Speculative LLM prefill</b> → start prefilling on the partial transcript; if it's stable, TTFT is near-instant at endpoint. Cancel/redo if the tail changes the meaning (cost: wasted prefill — cheap relative to the latency win).</li>
@@ -757,12 +775,12 @@ not the models.</div>
 <li><b>NeMo</b> — NVIDIA framework; HF Open-ASR code → distributed batch service is a small lift; trivial swap between Parakeet/Canary.</li>
 </ul>
 <table>
-<tr><th>vs proprietary API</th><th>Speed</th><th>Cost</th></tr>
+<tr><th>vs proprietary API (Deepgram)</th><th>Speed</th><th>Cost</th></tr>
 <tr><td>Parakeet, fastest</td><td class="num">112×</td><td class="num">60×</td></tr>
 <tr><td>Parakeet, cheapest</td><td class="num">25×</td><td class="num">200×</td></tr>
 <tr><td>Canary, fastest</td><td class="num">80×</td><td class="num">55×</td></tr>
 <tr><td>Canary, cheapest</td><td class="num">12×</td><td class="num">152×</td></tr>
-<tr><td>Proprietary API</td><td class="num">1×</td><td class="num">1×</td></tr>
+<tr><td>Proprietary API (Deepgram)</td><td class="num">1×</td><td class="num">1×</td></tr>
 </table>
 <p><span class="api">Orange = API</span> (buy quality/latency, pay per-use). <span class="self">Teal = self-host</span> (1–2 orders cheaper, you run infra). Typical split: self-host STT (volume), API for TTS + frontier LLM (quality/latency).</p>
 
@@ -897,7 +915,7 @@ context carries across.</p>
 <table>
 <tr><th>Failure</th><th>Effect</th><th>Mitigation</th></tr>
 <tr><td>LLM TTFT spike</td><td>dead air</td><td><b>backchannel</b> ("let me check…") to mask; timeout→fallback model</td></tr>
-<tr><td>STT wrong on μ-law</td><td>misheard intent</td><td>upsample+denoise; confidence gate → reprompt</td></tr>
+<tr><td>STT wrong on μ-law</td><td>misheard intent</td><td>upsample+denoise (Krisp); confidence gate → reprompt</td></tr>
 <tr><td>TTS stall</td><td>cut-off speech</td><td>buffer 1–2 chunks; cache common phrases</td></tr>
 <tr><td>Specialist down (vision/prosody)</td><td>lost signal</td><td>degrade gracefully to remaining channels (late fusion enables this)</td></tr>
 <tr><td>Watermark starvation</td><td>frozen timeline</td><td>idle-stream heartbeat advances watermark</td></tr>
