@@ -482,7 +482,7 @@ conversation.</em></p>
 <h2 id="llm">11 · The LLM core <span class="n">— the shared brain</span></h2>
 <table>
 <tr><th>Concern</th><th>Choice</th><th>Notes</th></tr>
-<tr><td>Model</td><td class="tool api">Claude</td><td class="alt">OpenAI, Qwen 2.5 7B (self-host), Groq</td></tr>
+<tr><td>Model</td><td class="tool api">Claude</td><td class="alt">OpenAI, Qwen 2.5 7B (self-host), Groq, Pipecat PhoneLLM (self-host, voice-tuned)</td></tr>
 <tr><td>First-token latency</td><td class="tool">prompt cache + speculative prefill</td><td>cache system prompt + history (hit every turn); prefill on STT partials so TTFT ≈ 0 at endpoint</td></tr>
 <tr><td>Memory / capacity</td><td class="tool">KV-cache = session working mem</td><td><b>a token is the unit of work, not a request.</b> Admit by token budget. (Derived from §10 layer 4.)</td></tr>
 <tr><td>Throughput</td><td class="tool">continuous batching</td><td>admit/evict per token step; voice + text share the pool at different priorities</td></tr>
@@ -492,6 +492,25 @@ conversation.</em></p>
 prompt (§10) — words carrying <code>speaker_id</code>, prosody tags, visual refs.
 "this is fine" arrives annotated as "said angrily while pointing at the fee." The
 model reasons over signal, not just text.</div>
+
+<div class="box"><div class="t">New option: a small LLM fine-tuned specifically for the voice-agent job</div>
+The general pattern in the table above — self-host a small open model instead of a
+frontier API — now has a purpose-built entry: <b>Pipecat PhoneLLM Alpha 1</b>
+(<code>pipecat-ai/phonellm-alpha-1</code>), from the same Daily/Pipecat team behind
+Smart Turn (§4). It's a full-parameter SFT of NVIDIA's Nemotron 3 Nano 30B-A3B
+(hybrid Mamba-Transformer MoE, 3.5B active), <b>trained specifically to call the
+right tool at the right time with thinking disabled</b> — the exact failure mode
+(agents saying "I've booked that" without calling the tool) that hurts frontier
+models in multi-turn phone calls. BSD-licensed, servable via vLLM/SGLang or as a
+<code>modal endpoint create</code> Auto Endpoint. Reported single-request P95 TTFT
+&lt;100ms on one B200, and (per their PhoneBench cost sweep) sub-$0.0003/min at
+target concurrency — cheap enough to sit next to the Modal STT endpoints in §15's
+table. <span class="warn">Same self-host-vs-API tradeoff as always</span> (§15): you
+trade the frontier model's general reasoning for a narrow model that's faster,
+cheaper, and — for this one job — more reliable at tool-calling. The same recipe
+(SFT a small open base for tool-calling + low TTFT, thinking off) generalizes to
+other bases, e.g. Qwen, if you have production traces to train on.
+</div>
 
 <h3>Cascade vs native multimodal (speech-to-speech / omni) <span class="n">— the big fork</span></h3>
 <div class="punch">
@@ -967,6 +986,7 @@ EnrichedToken = {                    <span class="c"># what the sequencer emits 
 <li>Supertonic — on-device TTS (ONNX, ~99M): <a href="https://github.com/supertone-inc/supertonic">github.com/supertone-inc/supertonic</a></li>
 <li>Orpheus streaming (200ms TTS): <a href="https://github.com/Edward-Zion-Saji/orpheus-streaming-modal">github.com/Edward-Zion-Saji/orpheus-streaming-modal</a></li>
 <li>Open ASR leaderboard: <a href="https://huggingface.co/spaces/hf-audio/open_asr_leaderboard">huggingface.co/spaces/hf-audio/open_asr_leaderboard</a></li>
+<li>Pipecat PhoneLLM Alpha 1 — voice-tuned tool-calling LLM: <a href="https://huggingface.co/pipecat-ai/phonellm-alpha-1">huggingface.co/pipecat-ai/phonellm-alpha-1</a></li>
 </ul>
 <p class="sub" style="margin-top:1.5rem">Verify-before-quoting: KVarN ~7× numbers, exact RTFx/WER figures, and cost multipliers are as-captured from source material — confirm before citing live. The Modal ragbot details (~1s v2v, component list) are from the Modal blog + repo as of capture.</p>
 
