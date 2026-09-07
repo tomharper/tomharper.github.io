@@ -83,7 +83,7 @@ multimodal capture</em>.
 <li><b>Hard problem 3 — Integrity.</b> Two-sided raises the stakes: candidates will try to cheat (LLM assistance, coached answers); companies need auditable, bias-controlled results. Anti-cheat + fairness are product-critical, not afterthoughts.</li>
 </ul>
 <div class="box g"><div class="t">What it reuses from the companion docs</div>
-The <b>live session</b> is the <a href="voice_stack_master.html">voice stack</a> + <a href="multimodal_fusion_design.html">event-time fusion</a>.
+The <b>live session</b> is the <a href="voice_stack_master.html">voice stack</a> + <a href="voice_stack_master.html#fusion">event-time fusion</a>.
 The <b>evaluator + content engine</b> are LLM-serving (<a href="14_inference_server.html">inference server</a> / router). The <b>pipeline</b>
 is a state machine over a persistent session record. The <b>scale story</b> is the
 resource scheduler. This doc is mostly <em>composition</em> of pieces already designed.</div>
@@ -374,7 +374,7 @@ a slick spoken demo over a scoring engine you can't defend.)</div>
 <li><b>Scope:</b> two-sided + multimodal + fair-eval is a <em>lot</em>. The thin-slice order exists so you can find out if the eval core works before building the rest.</li>
 </ul>
 
-<p class="sub" style="margin-top:1.5rem">Companion docs: <a href="voice_stack_master.html">voice stack</a> · <a href="multimodal_fusion_design.html">multimodal fusion</a> · <a href="14_inference_server.html">inference serving</a> · <a href="systems_concurrency_primer.html">concurrency</a> · <a href="memory_models_primer.html">memory models</a>. This platform is largely their composition under an interview state machine.</p>
+<p class="sub" style="margin-top:1.5rem">Companion docs: <a href="voice_stack_master.html">voice stack</a> (includes <a href="voice_stack_master.html#fusion">multimodal fusion</a>) · <a href="14_inference_server.html">inference serving</a> · <a href="systems_concurrency_primer.html">concurrency</a> · <a href="memory_models_primer.html">memory models</a>. This platform is largely their composition under an interview state machine.</p>
 
 </body>
 </html>
