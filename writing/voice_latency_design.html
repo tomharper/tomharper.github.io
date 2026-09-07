@@ -113,13 +113,46 @@ about spending that budget — and the dominant cost is not a model, it's
 <div class="legend"><b style="color:#5d5d72">solid</b> = inbound media (caller → models) · <b style="color:#0b7a55">green</b> = the return leg (streamed TTS audio → playout). The amber band is the codec ceiling: the ingress format caps STT quality before any model choice.</div>
 
 <div class="box">
-<div class="t">Twilio-specific reality (the part most candidates miss)</div>
+<div class="t">Vendor reality, illustrated via Twilio's public docs (the part most candidates miss)</div>
+<p style="margin-bottom:0.5rem">Everything in this box is from published product documentation, not
+insider knowledge — it's one worked example of a pattern that's true of any PSTN/CPaaS
+vendor (Vonage, Telnyx behave the same way at the codec/carrier level). §1a compares it
+against LiveKit's WebRTC-native shape.</p>
 <ul>
-<li><b>PSTN audio is 8kHz μ-law (G.711)</b>, narrowband, ~64kbps. You do <em>not</em> control this — the carrier delivers it. It caps STT accuracy vs. the 48kHz Opus you'd get over WebRTC. Upsample + denoise before STT — <b>Krisp</b> (or RNNoise) for noise suppression, cheap CPU, done before the STT hop.</li>
-<li><b>Media Streams</b> forks the call audio to your WebSocket in 20ms μ-law frames. <b>ConversationRelay</b> is the newer managed path — Twilio runs STT+TTS, you bring the LLM over WebSocket (removes two hops from your budget, at the cost of model choice).</li>
-<li><b>Regional POPs / media servers</b> — keep the media path close to the caller; a transatlantic RTT can eat 150ms by itself. Place the agent near the POP.</li>
+<li><b>PSTN audio is 8kHz μ-law (G.711)</b>, narrowband, ~64kbps — this is the <em>telephony network standard</em>, not a vendor quirk. You do <em>not</em> control this — the carrier delivers it. It caps STT accuracy vs. the 48kHz Opus you'd get over WebRTC. Upsample + denoise before STT — <b>Krisp</b> (or RNNoise) for noise suppression, cheap CPU, done before the STT hop.</li>
+<li><b>Media Streams</b> forks the call audio to your WebSocket in 20ms μ-law frames — Twilio's published transport for this pattern. <b>ConversationRelay</b> is the newer managed path — Twilio runs STT+TTS, you bring the LLM over WebSocket (removes two hops from your budget, at the cost of model choice).</li>
+<li><b>Regional POPs / media servers</b> — keep the media path close to the caller; a transatlantic RTT can eat 150ms by itself. Place the agent near the POP. (Every CPaaS/SFU vendor has an equivalent edge-locality story — this isn't unique to one provider.)</li>
 <li><b>Carrier/PSTN setup + jitter</b> is real and variable; WebRTC gives you a jitter buffer you can tune, PSTN does not.</li>
 </ul>
+</div>
+
+<h3>1a. The alternative viewpoint <span class="n">— LiveKit (WebRTC-native, room/SFU model)</span></h3>
+<p>LiveKit is the other public reference point worth knowing, and it's a useful contrast
+because it's <b>WebRTC-native end-to-end</b> rather than WS-relay-by-default. Per LiveKit's
+own docs: agents are <b>"full realtime participants"</b> in a room; <b>"LiveKit WebRTC is
+used between the frontend and the agent, while the agent communicates with your backend
+using HTTP and WebSockets."</b> Telephony is bridged in via <b>LiveKit SIP</b> — a SIP
+trunk plus dispatch rules turn an inbound phone call into a SIP participant inside the
+room, rather than a WebSocket frame stream.</p>
+
+<table>
+<tr><th>Aspect</th><th>Twilio-shaped (WS relay)</th><th>LiveKit-shaped (WebRTC room)</th></tr>
+<tr><td class="stage">Frontend/browser ↔ agent transport</td><td>WebSocket (Media Streams) — TCP</td><td>WebRTC (SFU/room) — SRTP over UDP</td></tr>
+<tr><td class="stage">Loss behavior</td><td class="warn">head-of-line blocking — one dropped packet stalls the frames behind it</td><td>packet loss concealment — WebRTC just degrades, doesn't stall</td></tr>
+<tr><td class="stage">Telephony ingress</td><td>native (it's a CPaaS) — Media Streams / ConversationRelay</td><td>bridged via LiveKit SIP — trunk + dispatch rules → SIP participant in a room</td></tr>
+<tr><td class="stage">PSTN codec ceiling</td><td>8kHz μ-law (G.711) — carrier-fixed</td><td>same 8kHz μ-law on the SIP leg — the gateway transcodes to the room's codec; the ceiling is telephony-network-wide, not vendor-specific</td></tr>
+<tr><td class="stage">Managed STT+TTS bundle</td><td>ConversationRelay (Twilio-run)</td><td>none bundled — plugins for "nearly every AI provider" run in your own agent process</td></tr>
+<tr><td class="stage">Noise suppression</td><td>bring your own (Krisp/RNNoise) before STT</td><td>Krisp noise cancellation is an integrated LiveKit feature</td></tr>
+<tr><td class="stage">Self-host</td><td>not applicable — Twilio <em>is</em> the edge</td><td>LiveKit SFU is open-source and self-hostable, or LiveKit Cloud</td></tr>
+</table>
+<div class="box g">
+<div class="t">The point of the comparison</div>
+The codec ceiling and edge-locality concerns in the box above aren't proprietary to any
+one company — they're properties of PSTN/G.711 and of network physics. What's genuinely
+vendor-specific is the <b>transport shape</b>: a WebSocket relay you write yourself
+(Twilio's default pattern) vs. a WebRTC room your agent joins as a participant (LiveKit's
+pattern) — and that changes your failure mode under packet loss (§5), not just which
+logo is on the invoice.
 </div>
 
 <h2>2. The mouth-to-mouth budget — staged</h2>
