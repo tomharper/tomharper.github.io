@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Distributing a File to N Nodes — Fan-Out vs. Pipelined Chain</title>
+<style>
+  :root {
+    --bg:#fbfbfd; --card:#f2f3f8; --card2:#e9eaf2; --line:#d6d8e4;
+    --ink:#1d1d2c; --muted:#5d5d72;
+    --accent:#3b3f8f; --green:#0b7a55; --blue:#1f5fa8; --purple:#6a2cd0;
+    --orange:#b35900; --cyan:#0d6e87; --amber:#946200; --red:#3b3f8f;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); padding:2rem 2.5rem; line-height:1.62; max-width:1180px; margin:0 auto; }
+  h1 { color:var(--accent); font-size:1.7rem; margin-bottom:0.2rem; }
+  .sub { color:var(--muted); margin-bottom:1.5rem; font-size:0.92rem; }
+  h2 { color:var(--green); margin:2.8rem 0 1rem; font-size:1.3rem; border-bottom:2px solid var(--line); padding-bottom:0.5rem; }
+  h2 .n { color:var(--muted); font-size:0.9rem; font-weight:normal; }
+  h3 { color:var(--blue); margin:1.5rem 0 0.5rem; font-size:1.05rem; }
+  h4 { color:var(--purple); margin:1rem 0 0.4rem; font-size:0.92rem; }
+  p { font-size:0.9rem; margin:0.6rem 0; }
+  b { color:var(--green); } em { color:var(--accent); font-style:normal; font-weight:600; }
+  code { background:var(--card2); padding:0.1rem 0.4rem; border-radius:3px; color:var(--cyan); font-size:0.84rem; font-family:'SF Mono',ui-monospace,monospace; }
+  ul,ol { margin:0.5rem 0 0.7rem 1.5rem; font-size:0.9rem; } li { margin:0.32rem 0; }
+  a { color:var(--blue); }
+
+  table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:0.84rem; }
+  th { background:var(--accent); color:#fff; text-align:left; padding:0.5rem 0.7rem; }
+  td { padding:0.5rem 0.7rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:nth-child(even) td { background:var(--card); }
+  .stage { color:var(--green); font-weight:700; white-space:nowrap; }
+  .num { color:var(--amber); white-space:nowrap; font-weight:700; }
+  .tot td { border-top:2px solid var(--accent); font-weight:700; background:var(--card2); }
+
+  .punch { background:#eef0fb; border:1px solid var(--accent); border-left:4px solid var(--accent); border-radius:6px; padding:0.9rem 1.1rem; margin:1.1rem 0; font-size:0.9rem; }
+  .punch b { color:var(--accent); }
+  .box { background:var(--card); border-left:4px solid var(--blue); padding:1rem 1.2rem; margin:1rem 0; border-radius:0 6px 6px 0; }
+  .box.g { border-color:var(--green); } .box.y { border-color:var(--amber); } .box.r { border-color:var(--red); }
+  .box .t { color:var(--blue); font-weight:700; margin-bottom:0.5rem; }
+  .box.g .t { color:var(--green); } .box.y .t { color:var(--amber); } .box.r .t { color:var(--red); }
+  .warn { color:var(--red); font-weight:700; }
+  .pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1rem; font-size:0.82rem; overflow-x:auto; color:var(--ink); font-family:'SF Mono',ui-monospace,monospace; line-height:1.5; }
+  .pre .c { color:var(--muted); }
+  svg { display:block; margin:1.2rem auto; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+  svg text { font-family:-apple-system,'Segoe UI',sans-serif; }
+  .legend { font-size:0.78rem; color:var(--muted); text-align:center; margin:-0.5rem 0 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Distributing a File to N Nodes — Fan-Out vs. Pipelined Chain</h1>
+<div class="sub">The constraint that makes this interesting: every node — including the one that starts with the file — has a single NIC capped at <code>B</code> up <em>and</em> <code>B</code> down (say 1&nbsp;MB/s each direction). No magic backbone, no multicast-capable switch. Given that, how do you get the file to N&minus;1 other nodes fastest?</div>
+
+<div class="punch">
+<b>Pipelined chain (bucket brigade), not fan-out.</b> Fan-out forces every one of the
+(N&minus;1) copies through the <em>same single uplink</em> — the source's — so it costs
+(N&minus;1)&middot;S/B no matter how you slice the connections. A chain that relays the file
+node-to-node, <b>split into small chunks so every hop is pipelined</b>, spreads those
+same (N&minus;1) copies across (N&minus;1) <em>different</em> uplinks running concurrently.
+Wall-clock collapses toward <b>S/B</b> — the time to push the file out <em>once</em> —
+almost independent of N. The catch: you only get that if you chunk and pipeline.
+A naive whole-file relay (no pipelining) is exactly as slow as fan-out.
+</div>
+
+<h2>1. The setup</h2>
+<p>One node (<code>S0</code>) holds a file of size <code>S</code>. There are <code>R</code>
+other nodes that need a full copy (<code>N = R + 1</code> nodes total). Every node's NIC
+is symmetric and independent in each direction: <code>B</code> up, <code>B</code> down —
+so a node can receive on one flow and transmit on another at the same time, but it
+cannot exceed <code>B</code> in either direction, no matter how many flows share it.
+We'll run the numbers with <code>S = 1000&nbsp;MB</code>, <code>B = 1&nbsp;MB/s</code>,
+<code>R = 10</code> receivers — clean numbers, real gap between strategies.</p>
+
+<h2>2. Fan-out (star) <span class="n">— the trap</span></h2>
+
+<svg viewBox="0 0 1080 260" role="img" aria-label="Fan-out topology: source sends directly to every receiver, all copies funneled through one uplink">
+  <defs>
+    <marker id="f1" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b35900"/></marker>
+  </defs>
+  <text x="540" y="26" fill="#b35900" font-size="12" text-anchor="middle" font-weight="bold">FAN-OUT — one uplink carries all R copies, one after another</text>
+
+  <rect x="470" y="60" width="140" height="50" rx="6" fill="#fdf0e3" stroke="#b35900"/>
+  <text x="540" y="90" fill="#b35900" font-size="11" text-anchor="middle" font-weight="bold">S0 (source)</text>
+
+  <g font-size="9.5">
+    <rect x="40"  y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="90" y="214" text-anchor="middle">R1</text>
+    <rect x="160" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="210" y="214" text-anchor="middle">R2</text>
+    <rect x="280" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="330" y="214" text-anchor="middle">R3</text>
+    <rect x="400" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="450" y="214" text-anchor="middle">R4</text>
+    <rect x="520" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="570" y="214" text-anchor="middle">R5</text>
+    <rect x="640" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="690" y="214" text-anchor="middle">…</text>
+    <rect x="760" y="190" width="100" height="40" rx="5" fill="#f2f3f8" stroke="#5d5d72"/><text x="810" y="214" text-anchor="middle">R10</text>
+  </g>
+
+  <line x1="490" y1="110" x2="95"  y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="510" y1="110" x2="215" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="525" y1="110" x2="335" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="535" y1="110" x2="455" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="545" y1="110" x2="575" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="560" y1="110" x2="695" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+  <line x1="580" y1="110" x2="815" y2="188" stroke="#b35900" marker-end="url(#f1)"/>
+
+  <text x="540" y="150" fill="#946200" font-size="10" text-anchor="middle" font-weight="bold">all 7 (…10) transfers share S0's ONE uplink of capacity B</text>
+</svg>
+<div class="legend">Splitting the connections doesn't split the bottleneck: S0's NIC still has to push out (N&minus;1) full copies, at a combined rate no higher than B.</div>
+
+<p>Whether S0 opens all R connections at once (each getting B/R) or serves them one at a
+time at full B, the <b>total bytes leaving S0's single uplink is (N&minus;1)&middot;S</b>,
+capped at rate B. Either way:</p>
+
+<div class="box">
+<div class="t">Fan-out time</div>
+<code>T_fanout = R &middot; S / B</code> &nbsp;→&nbsp; with our numbers: <code>10 &middot; 1000 / 1 = 10,000s ≈ 2.8 hours</code>
+</div>
+
+<h2>3. Naive chain <span class="n">— the same trap, wearing a different hat</span></h2>
+<p>The obvious "fix" — relay the file S0→R1→R2→…→R10 instead of fanning out — looks
+smarter, but if each hop waits for the <em>whole file</em> to land before forwarding it,
+you've just serialized the same (N&minus;1) transfers instead of parallelizing them:</p>
+
+<div class="box y">
+<div class="t">Naive (unpipelined) chain time</div>
+<code>T_chain_naive = R &middot; S / B = 10,000s</code> — identical to fan-out. No win.
+</div>
+
+<p>This is the part people miss: <b>relaying isn't the win by itself</b>. The win comes
+from <em>chunking + pipelining</em>, which lets the R links run concurrently instead of
+one after another.</p>
+
+<h2>4. Pipelined chain (bucket brigade) <span class="n">— the actual answer</span></h2>
+<p>Split the file into <code>k</code> chunks of size <code>S/k</code>. Each node forwards
+chunk <code>i</code> to its downstream neighbor the instant it has fully received it —
+<em>while simultaneously still receiving chunk i+1</em> from upstream (this is exactly
+why the NIC needs independent up and down capacity). Once the pipeline is full, every
+one of the R links is busy carrying a <em>different</em> chunk at the same wall-clock
+moment.</p>
+
+<svg viewBox="0 0 1080 300" role="img" aria-label="Pipeline gantt chart: each hop of the chain carries a different chunk at the same time, once the pipeline fills">
+  <text x="540" y="24" fill="#0b7a55" font-size="12" text-anchor="middle" font-weight="bold">STEADY STATE — every link busy with a different chunk, same instant</text>
+
+  <g font-size="9.5" fill="#5d5d72">
+    <text x="20" y="66">S0 → R1</text>
+    <text x="20" y="100">R1 → R2</text>
+    <text x="20" y="134">R2 → R3</text>
+    <text x="20" y="168">R3 → R4</text>
+    <text x="20" y="202">R4 → R5</text>
+    <text x="20" y="236">…</text>
+  </g>
+  <line x1="120" y1="20" x2="120" y2="250" stroke="#d6d8e4" stroke-dasharray="3 3"/>
+  <line x1="720" y1="20" x2="720" y2="250" stroke="#946200" stroke-dasharray="4 4"/>
+  <text x="720" y="264" fill="#946200" font-size="9.5" text-anchor="middle" font-weight="bold">a snapshot in time</text>
+
+  <g font-size="9" font-weight="bold" fill="#fff">
+    <rect x="150" y="52"  width="60" height="24" rx="3" fill="#0b7a55"/><text x="180" y="68" text-anchor="middle">C1</text>
+    <rect x="230" y="52"  width="60" height="24" rx="3" fill="#1f5fa8"/><text x="260" y="68" text-anchor="middle">C2</text>
+    <rect x="310" y="52"  width="60" height="24" rx="3" fill="#6a2cd0"/><text x="340" y="68" text-anchor="middle">C3</text>
+    <rect x="390" y="52"  width="60" height="24" rx="3" fill="#b35900"/><text x="420" y="68" text-anchor="middle">C4</text>
+    <rect x="470" y="52"  width="60" height="24" rx="3" fill="#0d6e87"/><text x="500" y="68" text-anchor="middle">C5</text>
+    <rect x="630" y="52"  width="60" height="24" rx="3" fill="#946200"/><text x="660" y="68" text-anchor="middle">C7</text>
+
+    <rect x="70"  y="86"  width="60" height="24" rx="3" fill="#0b7a55" opacity="0.35"/>
+    <rect x="150" y="86"  width="60" height="24" rx="3" fill="#1f5fa8"/><text x="180" y="102" text-anchor="middle">C2</text>
+    <rect x="230" y="86"  width="60" height="24" rx="3" fill="#6a2cd0"/><text x="260" y="102" text-anchor="middle">C3</text>
+    <rect x="310" y="86"  width="60" height="24" rx="3" fill="#b35900"/><text x="340" y="102" text-anchor="middle">C4</text>
+    <rect x="390" y="86"  width="60" height="24" rx="3" fill="#0d6e87"/><text x="420" y="102" text-anchor="middle">C5</text>
+    <rect x="550" y="86"  width="60" height="24" rx="3" fill="#3b3f8f"/><text x="580" y="102" text-anchor="middle">C6</text>
+
+    <rect x="150" y="120" width="60" height="24" rx="3" fill="#6a2cd0"/><text x="180" y="136" text-anchor="middle">C3</text>
+    <rect x="230" y="120" width="60" height="24" rx="3" fill="#b35900"/><text x="260" y="136" text-anchor="middle">C4</text>
+    <rect x="310" y="120" width="60" height="24" rx="3" fill="#0d6e87"/><text x="340" y="136" text-anchor="middle">C5</text>
+    <rect x="470" y="120" width="60" height="24" rx="3" fill="#3b3f8f"/><text x="500" y="136" text-anchor="middle">C6</text>
+
+    <rect x="150" y="154" width="60" height="24" rx="3" fill="#b35900"/><text x="180" y="170" text-anchor="middle">C4</text>
+    <rect x="230" y="154" width="60" height="24" rx="3" fill="#0d6e87"/><text x="260" y="170" text-anchor="middle">C5</text>
+    <rect x="390" y="154" width="60" height="24" rx="3" fill="#3b3f8f"/><text x="420" y="170" text-anchor="middle">C6</text>
+
+    <rect x="150" y="188" width="60" height="24" rx="3" fill="#0d6e87"/><text x="180" y="204" text-anchor="middle">C5</text>
+    <rect x="310" y="188" width="60" height="24" rx="3" fill="#3b3f8f"/><text x="340" y="204" text-anchor="middle">C6</text>
+  </g>
+
+  <text x="20" y="280" fill="#5d5d72" font-size="10">time →</text>
+  <line x1="70" y1="272" x2="1040" y2="272" stroke="#5d5d72" marker-end="url(#f1)"/>
+</svg>
+<div class="legend">Diagonal bands = chunks moving hop-by-hop. At the dashed instant, five different links each carry a different chunk simultaneously — that concurrency is the whole trick. Fan-out and the naive chain never get this: they only ever use one link at a time.</div>
+
+<p>Time for the <em>last</em> chunk to clear the pipeline: it waits for the source to
+finish pushing out the previous (k&minus;1) chunks — that's the source's own uplink,
+still one flow — then it takes R more hops to reach the far end:</p>
+
+<div class="box g">
+<div class="t">Pipelined chain time (k chunks)</div>
+<code>T(k) = (S/B) &middot; (1 + (R&minus;1)/k)</code>
+<p style="margin-top:0.5rem">As <code>k → ∞</code>, <code>T(k) → S/B</code> — the time to push the
+file out <em>once</em>. R barely matters anymore.</p>
+</div>
+
+<h2>5. Numbers side by side</h2>
+<table>
+<tr><th>Strategy</th><th>Formula</th><th>S=1000MB, B=1MB/s, R=10</th><th>vs. ideal floor (S/B=1000s)</th></tr>
+<tr><td class="stage">Fan-out</td><td><code>R·S/B</code></td><td class="num">10,000s (2.8h)</td><td>10×</td></tr>
+<tr><td class="stage">Naive chain (k=1)</td><td><code>(S/B)(1+(R-1)/1)</code></td><td class="num">10,000s (2.8h)</td><td>10×</td></tr>
+<tr><td class="stage">Pipelined chain, k=10</td><td><code>(S/B)(1+9/10)</code></td><td class="num">1,900s (32min)</td><td>1.9×</td></tr>
+<tr><td class="stage">Pipelined chain, k=100</td><td><code>(S/B)(1+9/100)</code></td><td class="num">1,090s (18min)</td><td>1.09×</td></tr>
+<tr><td class="stage">Pipelined chain, k=1000</td><td><code>(S/B)(1+9/1000)</code></td><td class="num">1,009s (16.8min)</td><td>1.009×</td></tr>
+<tr class="tot"><td>Ideal floor</td><td><code>S/B</code></td><td class="num">1,000s (16.7min)</td><td>1×</td></tr>
+</table>
+
+<div class="punch">
+Finer chunking is <b>free speed</b> up to the point where per-chunk overhead
+(packet/frame headers, RTT, TCP slow-start, ACKs) stops being negligible next to
+the chunk's own transfer time. In practice you pick the largest chunk count where
+that overhead is still small — not k→∞ literally.
+</div>
+
+<h2>6. Why chain wins <span class="n">— the one-sentence reason</span></h2>
+<div class="box">
+<div class="t">Aggregate bandwidth, not total bytes</div>
+<p>Both strategies move the same <code>(N&minus;1)&middot;S</code> total bytes — that part
+is fixed by the problem. The difference is <b>how many distinct NICs carry those bytes
+at the same instant</b>. Fan-out funnels everything through one node's uplink
+(effective aggregate throughput: <code>B</code>). A pipelined chain spreads the load
+across R different uplinks running concurrently (effective aggregate throughput:
+<code>R·B</code>) — full utilization of every link in the spanning tree at once. That's
+the entire trick, and it's why "relay" alone (§3) doesn't help without chunking: without
+pipelining, only one link is ever active, so aggregate throughput is still just
+<code>B</code>.</p>
+</div>
+
+<div class="punch">
+This isn't just "10&times; slower" — that 10&times; was a coincidence of picking
+<code>R=10</code> in the worked example. The exact, provable result is
+<code>T_fanout / T_pipelined(k) → R</code> as <code>k → ∞</code>: fan-out is
+<b>R times slower</b>, whatever R happens to be. Double your fleet, double the
+penalty — linearly, forever. The two charts below make that literal.
+</div>
+
+<svg viewBox="0 0 1080 400" role="img" aria-label="Line chart: fan-out time grows linearly with the number of receivers R, while pipelined chain time stays nearly flat">
+  <defs>
+    <marker id="ax1" markerWidth="8" markerHeight="8" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5 Z" fill="#5d5d72"/></marker>
+  </defs>
+  <text x="540" y="24" fill="#1d1d2c" font-size="12" text-anchor="middle" font-weight="bold">TIME TO REACH ALL R RECEIVERS, AS R GROWS</text>
+  <text x="540" y="40" fill="#5d5d72" font-size="9.5" text-anchor="middle">S = 1000MB, B = 1MB/s (S/B = 1000s) — pipelined chain shown at k = 1000</text>
+
+  <line x1="100" y1="40" x2="100" y2="360" stroke="#5d5d72"/>
+  <line x1="100" y1="360" x2="1040" y2="360" stroke="#5d5d72" marker-end="url(#ax1)"/>
+  <text x="1040" y="378" fill="#5d5d72" font-size="10" text-anchor="end">R (number of receivers) →</text>
+  <text x="30" y="200" fill="#5d5d72" font-size="10" transform="rotate(-90 30 200)" text-anchor="middle">time (seconds)</text>
+
+  <g font-size="9" fill="#5d5d72">
+    <line x1="96" y1="360" x2="1040" y2="360" stroke="#e9eaf2"/>
+    <line x1="96" y1="284" x2="1040" y2="284" stroke="#e9eaf2"/>
+    <text x="90" y="288" text-anchor="end">5,000</text>
+    <line x1="96" y1="208" x2="1040" y2="208" stroke="#e9eaf2"/>
+    <text x="90" y="212" text-anchor="end">10,000</text>
+    <line x1="96" y1="132" x2="1040" y2="132" stroke="#e9eaf2"/>
+    <text x="90" y="136" text-anchor="end">15,000</text>
+    <line x1="96" y1="56"  x2="1040" y2="56"  stroke="#e9eaf2"/>
+    <text x="90" y="60" text-anchor="end">20,000</text>
+    <text x="90" y="364" text-anchor="end">0</text>
+  </g>
+  <g font-size="9.5" fill="#5d5d72" text-anchor="middle">
+    <text x="100"  y="374">1</text>
+    <text x="536"  y="374">10</text>
+    <text x="1020" y="374">20</text>
+  </g>
+
+  <line x1="536" y1="360" x2="536" y2="40" stroke="#946200" stroke-dasharray="4 3"/>
+
+  <line x1="100" y1="345" x2="1020" y2="55" stroke="#b35900" stroke-width="2.5"/>
+  <text x="850" y="120" fill="#b35900" font-size="10.5" font-weight="bold">fan-out: R&middot;S/B (linear)</text>
+
+  <line x1="100" y1="345" x2="1020" y2="344" stroke="#0b7a55" stroke-width="2.5"/>
+  <text x="850" y="332" fill="#0b7a55" font-size="10.5" font-weight="bold">pipelined chain: ≈ S/B (flat)</text>
+
+  <circle cx="536" cy="208" r="4.5" fill="#b35900"/>
+  <text x="546" y="200" fill="#946200" font-size="9.5" font-weight="bold">R=10 → 10,000s</text>
+  <circle cx="536" cy="344" r="4.5" fill="#0b7a55"/>
+  <text x="546" y="360" fill="#0b7a55" font-size="9.5" font-weight="bold">R=10 → 1,009s</text>
+</svg>
+<div class="legend">Same worked example as §5, generalized across R. Fan-out's cost is unbounded in the fleet size; the pipelined chain barely notices R at all.</div>
+
+<svg viewBox="0 0 1080 380" role="img" aria-label="Line chart: the slowdown factor of fan-out versus pipelined chain equals R, a straight diagonal line">
+  <text x="540" y="24" fill="#1d1d2c" font-size="12" text-anchor="middle" font-weight="bold">THE THEOREM, VISUALIZED — SLOWDOWN FACTOR = R</text>
+  <text x="540" y="40" fill="#5d5d72" font-size="9.5" text-anchor="middle">T_fanout / T_pipelined(k→∞), exactly R — no S, no B, no hidden constant</text>
+
+  <line x1="100" y1="40" x2="100" y2="340" stroke="#5d5d72"/>
+  <line x1="100" y1="340" x2="1040" y2="340" stroke="#5d5d72" marker-end="url(#ax1)"/>
+  <text x="1040" y="358" fill="#5d5d72" font-size="10" text-anchor="end">R (number of receivers) →</text>
+  <text x="30" y="190" fill="#5d5d72" font-size="10" transform="rotate(-90 30 190)" text-anchor="middle">fan-out ÷ pipelined</text>
+
+  <g font-size="9" fill="#5d5d72">
+    <line x1="96" y1="340" x2="1040" y2="340" stroke="#e9eaf2"/><text x="90" y="344" text-anchor="end">0×</text>
+    <line x1="96" y1="260" x2="1040" y2="260" stroke="#e9eaf2"/><text x="90" y="264" text-anchor="end">5×</text>
+    <line x1="96" y1="180" x2="1040" y2="180" stroke="#e9eaf2"/><text x="90" y="184" text-anchor="end">10×</text>
+    <line x1="96" y1="100" x2="1040" y2="100" stroke="#e9eaf2"/><text x="90" y="104" text-anchor="end">15×</text>
+    <line x1="96" y1="40"  x2="1040" y2="40"  stroke="#e9eaf2"/><text x="90" y="44" text-anchor="end">20×</text>
+  </g>
+  <g font-size="9.5" fill="#5d5d72" text-anchor="middle">
+    <text x="100"  y="354">1</text>
+    <text x="536"  y="354">10</text>
+    <text x="1020" y="354">20</text>
+  </g>
+
+  <line x1="536" y1="340" x2="536" y2="180" stroke="#946200" stroke-dasharray="4 3"/>
+  <line x1="100" y1="324" x2="1020" y2="40" stroke="#3b3f8f" stroke-width="2.5"/>
+  <circle cx="536" cy="180" r="5" fill="#3b3f8f"/>
+  <text x="556" y="172" fill="#3b3f8f" font-size="10" font-weight="bold">R=10 → ≈10× (9.91× at k=1000)</text>
+  <text x="180" y="90" fill="#3b3f8f" font-size="11" font-weight="bold">y = R</text>
+</svg>
+<div class="legend">A straight diagonal, not a curve — the slowdown is <em>exactly</em> proportional to R at the ideal (k→∞) limit. At any finite k it's slightly under R (9.91× rather than 10× at k=1000 — see the correction term in §4), but the line R is the theorem you'd defend on a whiteboard.</div>
+
+<h2>7. When does a tree, or fan-out, actually become correct?</h2>
+<ul>
+<li><b>A tree doesn't help here, given the constraint.</b> If an internal node has to
+serve 2 children through the <em>same single NIC</em>, that NIC's capacity B splits
+between them — you don't get two full-rate branches for free. A tree only pays off
+when internal nodes have <em>spare</em> capacity beyond one downstream flow (multi-homed
+boxes, or a beefier source), in which case it trades a small bandwidth cost for
+<b>shallower depth</b> (log N hops instead of N) and <b>smaller failure blast radius</b>
+— a dead link only takes out its subtree, not "everyone after it" like a chain.</li>
+<li><b>Fan-out is correct when the source isn't NIC-bound like the clients are</b> —
+classic CDN origin: the source's pipe is provisioned far above <code>R·B</code>, so it
+genuinely can push a full-rate copy to every receiver in parallel. The math in §2
+assumed the source has the <em>same</em> single-NIC cap as everyone else; relax that and
+the answer flips.</li>
+<li><b>Chain's real weakness is fragility and tail latency</b> — one dead node or slow
+link stalls everyone downstream of it, and the farthest node always waits for the
+pipeline-fill term. At large R, real systems hedge with a few parallel chains or a
+randomized mesh rather than one long line (next section).</li>
+</ul>
+
+<h2>8. What real systems actually do</h2>
+<table>
+<tr><th>System</th><th>Shape</th><th>Why</th></tr>
+<tr><td class="stage">BitTorrent</td><td>many parallel, randomized bucket-brigades (rarest-first piece selection)</td><td>approximates full use of aggregate peer upload capacity; no single peer becomes the sequential bottleneck; tolerates churn</td></tr>
+<tr><td class="stage">MPI collective <code>Bcast</code></td><td>pipelined chain/ring for large messages; binary tree for small ones</td><td>large messages are bandwidth-bound → pipeline wins (§4); small messages are latency-bound → tree's log-depth wins instead</td></tr>
+<tr><td class="stage">Chain Replication</td><td>strict chain, writes flow head→tail</td><td>same bandwidth-pipelining argument, plus the chain order gives strong consistency for free</td></tr>
+<tr><td class="stage">Uber Kraken / P2P image &amp; model distribution</td><td>torrent-style swarm across the fleet</td><td>pushing multi-GB container/checkpoint images to thousands of hosts from one registry <em>is</em> the fan-out trap at datacenter scale</td></tr>
+<tr><td class="stage">CDN origin push (contrast case)</td><td>direct fan-out from origin</td><td>origin is deliberately over-provisioned vs. any single edge box — the source isn't the bottleneck, so §7's exception applies</td></tr>
+</table>
+
+<div class="punch">
+<b>Say out loud:</b> "With every node NIC-capped the same way, fan-out forces all
+(N&minus;1) copies through one uplink — <code>R·S/B</code>. A chain only helps once you
+chunk and pipeline it, so R links run concurrently instead of one — time collapses
+toward <code>S/B</code>, independent of N. Trees cost the same per-branch bandwidth
+unless nodes have spare capacity; they buy you shallower depth and smaller blast
+radius instead. Fan-out is only right again if the source itself isn't bandwidth-bound
+like the receivers are — the CDN-origin case."
+</div>
+
+</body>
+</html>
