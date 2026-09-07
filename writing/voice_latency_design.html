@@ -115,7 +115,7 @@ about spending that budget — and the dominant cost is not a model, it's
 <div class="box">
 <div class="t">Twilio-specific reality (the part most candidates miss)</div>
 <ul>
-<li><b>PSTN audio is 8kHz μ-law (G.711)</b>, narrowband, ~64kbps. You do <em>not</em> control this — the carrier delivers it. It caps STT accuracy vs. the 48kHz Opus you'd get over WebRTC. Mention upsampling/denoise before STT.</li>
+<li><b>PSTN audio is 8kHz μ-law (G.711)</b>, narrowband, ~64kbps. You do <em>not</em> control this — the carrier delivers it. It caps STT accuracy vs. the 48kHz Opus you'd get over WebRTC. Upsample + denoise before STT — <b>Krisp</b> (or RNNoise) for noise suppression, cheap CPU, done before the STT hop.</li>
 <li><b>Media Streams</b> forks the call audio to your WebSocket in 20ms μ-law frames. <b>ConversationRelay</b> is the newer managed path — Twilio runs STT+TTS, you bring the LLM over WebSocket (removes two hops from your budget, at the cost of model choice).</li>
 <li><b>Regional POPs / media servers</b> — keep the media path close to the caller; a transatlantic RTT can eat 150ms by itself. Place the agent near the POP.</li>
 <li><b>Carrier/PSTN setup + jitter</b> is real and variable; WebRTC gives you a jitter buffer you can tune, PSTN does not.</li>
@@ -130,7 +130,7 @@ about spending that budget — and the dominant cost is not a model, it's
 <tr><th>Stage</th><th>What happens</th><th>Naive</th><th>Tuned</th><th>Notes</th></tr>
 <tr><td class="stage">Network in (jitter buf)</td><td>frames arrive, de-jittered</td><td class="num">40ms</td><td class="num">20ms</td><td>WebRTC tunable; PSTN fixed</td></tr>
 <tr><td class="stage warn">Endpointing (turn end)</td><td><em>decide the human stopped</em></td><td class="num">700ms</td><td class="num">300ms</td><td class="warn">DOMINATES. silence wait + turn model</td></tr>
-<tr><td class="stage">STT (final)</td><td>partials stream live; finalize on endpoint</td><td class="num">300ms</td><td class="num">~50ms</td><td>partials already done; only the tail</td></tr>
+<tr><td class="stage">STT (final)</td><td>partials stream live; finalize on endpoint</td><td class="num">300ms</td><td class="num">~50ms</td><td>partials already done; only the tail — Deepgram is the realtime workhorse (streaming partials over WS)</td></tr>
 <tr><td class="stage">LLM TTFT</td><td>time to <em>first</em> token</td><td class="num">600ms</td><td class="num">250ms</td><td>prompt cache, small model, co-locate</td></tr>
 <tr><td class="stage">LLM→enough text</td><td>first sentence/clause to start TTS</td><td class="num">400ms</td><td class="num">~0ms</td><td>overlaps TTS — don't wait for full reply</td></tr>
 <tr><td class="stage">TTS TTFB</td><td>first audio chunk out</td><td class="num">300ms</td><td class="num">120ms</td><td>streaming TTS (Cartesia), first chunk only</td></tr>
@@ -235,7 +235,7 @@ latency:</p>
 <table>
 <tr><th>Failure</th><th>Effect</th><th>Mitigation</th></tr>
 <tr><td class="stage">LLM TTFT spike</td><td>dead air mid-conversation</td><td>filler/backchannel ("let me check…") to mask; timeout→fallback model</td></tr>
-<tr><td class="stage">STT slow/wrong on μ-law</td><td>misheard intent</td><td>upsample+denoise; confidence gate → reprompt</td></tr>
+<tr><td class="stage">STT slow/wrong on μ-law</td><td>misheard intent</td><td>upsample+denoise (Krisp); confidence gate → reprompt</td></tr>
 <tr><td class="stage">TTS stall</td><td>cut-off speech</td><td>buffer 1–2 chunks before playout starts; cache common phrases</td></tr>
 <tr><td class="stage">Network jitter</td><td>choppy audio</td><td>jitter buffer (adds latency — the tradeoff); regional POP</td></tr>
 </table>
@@ -248,7 +248,7 @@ buys you LLM time and feels natural. Latency you can't remove, you can <em>mask<
 <h2>6. Scaling &amp; economics <span class="n">— the resource-scheduler view</span></h2>
 <ul>
 <li><b>A voice session pins a GPU slot</b> for its whole duration (STT+TTS streaming, KV-cache resident) — unlike text, which is bursty and poolable. Concurrency/GPU is the cost driver.</li>
-<li><b>Self-host vs API per hop</b> — NVIDIA Parakeet/Canary on Modal is ~1–2 orders cheaper than proprietary STT at the cost of running infra (see <code>voice_agents_notes.md</code> tables; ~4¢/GPU-min). TTS (Cartesia) and LLM (OpenAI) often stay API for quality/latency.</li>
+<li><b>Self-host vs API per hop</b> — NVIDIA Parakeet/Canary on Modal is ~1–2 orders cheaper than proprietary STT (Deepgram) at the cost of running infra (see <code>voice_agents_notes.md</code> tables; ~4¢/GPU-min). TTS (Cartesia) and LLM (OpenAI) often stay API for quality/latency.</li>
 <li><b>KV-cache compression</b> (~7×) → more concurrent voice sessions per GPU + longer context at the same cost. Directly raises sessions-per-GPU.</li>
 <li><b>Scheduler</b> — sessions → GPU slots; admit by KV-cache budget, not headcount (the <code>14_inference_server</code> thesis). Text and voice share the LLM pool but at different tiers/priorities.</li>
 <li><b>Continuous (in-flight) batching, NOT static fill-and-fire</b> — voice can't wait to fill a batch; the fill-wait <em>is</em> the latency. Admit each request into the <em>running</em> batch immediately and let the GPU interleave it with sequences already decoding — batch efficiency with zero fill-wait. <span class="warn">One engine, per-class policy — NOT two systems. Voice/chat ride the same continuously-batched GPU pool as bulk; they're just admitted immediately (latency-first), while bulk/offline accumulates ("fill 100 or 40ms") and backfills the idle slots at low priority (throughput-first). The cheap Batch API tier <em>is</em> that backfill.</span></li>
